@@ -1,23 +1,36 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import { supabase } from "../../lib/supabase";
 
-interface Marker {
+interface Report {
   id: number;
   lat: number;
   lng: number;
-  title: string;
-  type: "found" | "not_found";
+  building_name: string;
+  position: string;
+  period_year: number;
+  period_month: number;
+  species: string;
+  situation: string;
 }
 
-interface LeafletMapProps {
-  markers?: Marker[];
-}
+export default function LeafletMap() {
+  const [reports, setReports] = useState<Report[]>([]);
 
-export default function LeafletMap({ markers = [] }: LeafletMapProps) {
   useEffect(() => {
+    const fetchReports = async () => {
+      const { data } = await supabase.from("reports").select("*");
+      if (data) setReports(data);
+    };
+    fetchReports();
+  }, []);
+
+  useEffect(() => {
+    if (reports.length === 0) return;
+
     const map = L.map("map").setView([35.6812, 139.7671], 12);
 
     L.tileLayer(
@@ -29,23 +42,28 @@ export default function LeafletMap({ markers = [] }: LeafletMapProps) {
       }
     ).addTo(map);
 
-    markers.forEach((marker) => {
-      const color = marker.type === "found" ? "red" : "green";
+    reports.forEach((report) => {
       const icon = L.divIcon({
-        html: `<div style="background:${color};width:24px;height:24px;border-radius:50%;border:2px solid white;display:flex;align-items:center;justify-content:center;font-size:14px;">🪳</div>`,
+        html: `<div style="font-size:24px;">🪳</div>`,
         className: "",
         iconSize: [24, 24],
       });
 
-      L.marker([marker.lat, marker.lng], { icon })
+      L.marker([report.lat, report.lng], { icon })
         .addTo(map)
-        .bindPopup(`<b>${marker.title}</b>`);
+        .bindPopup(`
+          <b>${report.building_name}</b><br/>
+          発生場所：${report.position}<br/>
+          時期：${report.period_year}年${report.period_month}月<br/>
+          種類：${report.species}<br/>
+          状況：${report.situation}
+        `);
     });
 
     return () => {
       map.remove();
     };
-  }, [markers]);
+  }, [reports]);
 
   return <div id="map" style={{ width: "100%", height: "100vh" }} />;
 }
