@@ -19,7 +19,11 @@ interface Report {
 }
 
 interface LeafletMapProps {
-  onMapClick: (lat: number, lng: number) => void;
+  onMapClick: (lat: number, lng: number, geoData?: {
+    prefecture: string;
+    city: string;
+    address: string;
+  }) => void;
   reportPos: { lat: number; lng: number } | null;
   isSelecting: boolean;
   onStartInput: (lat: number, lng: number) => void;
@@ -78,34 +82,16 @@ export default function LeafletMap({
       const { lat, lng } = e.latlng;
 
       try {
-        const res = await fetch(
-          `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
-          { headers: { "Accept-Language": "ja" } }
-        );
-        const data = await res.json();
-        console.log("Nominatim結果:", data);
+        const res = await fetch(`/api/reverse-geocode?lat=${lat}&lon=${lng}`);
+        const geoData = await res.json();
 
-        const cls = data?.class || "";
-        const dataType = data?.type || "";
-        const addresstype = data?.addresstype || "";
-
-        const forbiddenClass = ["waterway", "natural", "highway", "railway"];
-        const forbiddenType = ["water", "river", "stream", "sea", "coastline", "road"];
-        const forbiddenAddress = ["road", "waterway"];
-
-        if (
-          forbiddenClass.includes(cls) ||
-          forbiddenType.includes(dataType) ||
-          forbiddenAddress.includes(addresstype)
-        ) {
-          L.popup()
-            .setLatLng(e.latlng)
-            .setContent("⚠️ この場所には投稿できません")
-            .openOn(map);
+        if (geoData.error) {
+          console.warn("住所取得失敗", geoData.error);
+          onMapClickRef.current(lat, lng);
           return;
         }
 
-        onMapClickRef.current(lat, lng);
+        onMapClickRef.current(lat, lng, geoData);
       } catch {
         onMapClickRef.current(lat, lng);
       }

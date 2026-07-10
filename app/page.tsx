@@ -11,16 +11,24 @@ interface ReportPos {
   lng: number;
 }
 
+interface GeoData {
+  prefecture: string;
+  city: string;
+  address: string;
+}
+
 export default function Home() {
   const [step, setStep] = useState<Step>("idle");
   const [pos, setPos] = useState<ReportPos | null>(null);
+  const [geoData, setGeoData] = useState<GeoData | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   const handleStartReport = () => setStep("selecting");
 
-  const handleMapClick = (lat: number, lng: number) => {
+  const handleMapClick = (lat: number, lng: number, geo?: GeoData) => {
     if (step !== "selecting") return;
     setPos({ lat, lng });
+    setGeoData(geo ?? null);
     setStep("dragging");
   };
 
@@ -32,11 +40,13 @@ export default function Home() {
   const handleCancel = () => {
     setStep("idle");
     setPos(null);
+    setGeoData(null);
   };
 
   const handleSubmitDone = () => {
     setStep("idle");
     setPos(null);
+    setGeoData(null);
     setRefreshTrigger(n => n + 1);
   };
 
@@ -61,7 +71,7 @@ export default function Home() {
           onCancel={handleCancel}
           refreshTrigger={refreshTrigger}
         />
-
+        
         {step === "selecting" && (
           <div style={{
             position: "absolute",
@@ -107,6 +117,9 @@ export default function Home() {
           <ReportSidebar
             lat={pos.lat}
             lng={pos.lng}
+            prefecture={geoData?.prefecture ?? ""}
+            city={geoData?.city ?? ""}
+            address={geoData?.address ?? ""}
             onClose={handleCancel}
             onSubmitDone={handleSubmitDone}
           />

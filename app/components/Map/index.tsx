@@ -2,8 +2,8 @@
 
 import dynamic from "next/dynamic";
 
-const LeafletMap = dynamic(() => import("./LeafletMap"), {
+const AppleMap = dynamic(() => import("./AppleMap"), {
   ssr: false,
 });
 
-export default LeafletMap;
+export default AppleMap;
