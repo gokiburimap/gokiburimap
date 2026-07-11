@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Map from "./components/Map";
 import ReportSidebar from "./components/ReportSidebar";
 
@@ -17,19 +17,36 @@ interface GeoData {
   address: string;
 }
 
+interface MapHandle {
+  isZoomedInEnough: () => boolean;
+}
+
 export default function Home() {
   const [step, setStep] = useState<Step>("idle");
   const [pos, setPos] = useState<ReportPos | null>(null);
   const [geoData, setGeoData] = useState<GeoData | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const mapRef = useRef<MapHandle | null>(null);
+  const [showZoomWarning, setShowZoomWarning] = useState(false);
 
-  const handleStartReport = () => setStep("selecting");
+  const handleStartReport = () => {
+    if (mapRef.current && !mapRef.current.isZoomedInEnough()) {
+
+      setShowZoomWarning(true);
+      return;
+    }
+    setStep("selecting");
+  };
 
   const handleMapClick = (lat: number, lng: number, geo?: GeoData) => {
-    if (step !== "selecting") return;
-    setPos({ lat, lng });
-    setGeoData(geo ?? null);
-    setStep("dragging");
+    if (step === "selecting") {
+      setPos({ lat, lng });
+      setGeoData(geo ?? null);
+      setStep("dragging");
+    } else if (step === "dragging") {
+      setPos({ lat, lng });
+      setGeoData(geo ?? null);
+    }
   };
 
   const handleStartInput = (lat: number, lng: number) => {
@@ -64,6 +81,7 @@ export default function Home() {
       </header>
       <div style={{ flex: 1, position: "relative" }}>
         <Map
+          ref={mapRef}
           onMapClick={handleMapClick}
           reportPos={pos}
           isSelecting={step === "selecting"}
@@ -72,6 +90,35 @@ export default function Home() {
           refreshTrigger={refreshTrigger}
         />
         
+        {showZoomWarning && (
+          <div
+            onClick={() => setShowZoomWarning(false)}
+            style={{
+              position: "absolute",
+              inset: 0,
+              zIndex: 2000,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+            }}
+          >
+          <div
+              style={{
+                background: "rgba(255,255,255,0.95)",
+                padding: "16px 28px",
+                borderRadius: "12px",
+                boxShadow: "0 4px 16px rgba(0,0,0,0.2)",
+                fontSize: "14px",
+                color: "#111",
+                textAlign: "center",
+                whiteSpace: "nowrap",
+              }}
+            >
+              目撃情報を報告するにはズームインしてください
+            </div>
+          </div>
+        )}
         {step === "selecting" && (
           <div style={{
             position: "absolute",

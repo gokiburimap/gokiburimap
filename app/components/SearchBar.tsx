@@ -3,7 +3,7 @@ import { Search } from "lucide-react";
 import { useState } from "react";
 
 interface SearchBarProps {
-  onSearch: (lat: number, lng: number) => void;
+  onSearch: (lat: number, lng: number, boundingBox?: [string, string, string, string]) => void;
 }
 
 export default function SearchBar({ onSearch }: SearchBarProps) {
@@ -20,7 +20,7 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
     const data = await res.json();
 
     if (data.length > 0) {
-      onSearch(parseFloat(data[0].lat), parseFloat(data[0].lon));
+      onSearch(parseFloat(data[0].lat), parseFloat(data[0].lon), data[0].boundingbox);
     } else {
       alert("場所が見つかりませんでした");
     }
