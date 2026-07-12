@@ -1,6 +1,7 @@
 "use client";
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import Supercluster from "supercluster";
 import { supabase } from "../../lib/supabase";
 import SearchBar from "../SearchBar";
 
@@ -39,14 +40,12 @@ declare global {
   }
 }
 
-const ZOOM_THRESHOLD = 0.005;
+const ZOOM_THRESHOLD = 0.002;
 
-// ズームレベル(latitudeDelta)に応じたアイコンサイズを計算
-// span が小さい(ズームイン)ほど大きく、大きい(ズームアウト)ほど小さく
 const MIN_SPAN = 0.01;
 const MAX_SPAN = 20;
-const MIN_ICON_SIZE = 14;
-const MAX_ICON_SIZE = 32;
+const MIN_ICON_SIZE = 8;
+const MAX_ICON_SIZE = 20;
 
 function getIconSizeForSpan(latitudeDelta: number) {
   const clamped = Math.min(Math.max(latitudeDelta, MIN_SPAN), MAX_SPAN);
@@ -57,36 +56,127 @@ function getIconSizeForSpan(latitudeDelta: number) {
   return Math.round(size);
 }
 
-// 絵文字を透過画像（Data URL）に変換
-const createEmojiIconUrl = (emoji: string, size: number) => {
+function getClusterIconSize(count: number) {
+  const size = 32 + Math.log2(count) * 6;
+  return Math.round(Math.min(Math.max(size, 32), 56));
+}
+
+const createClusterIconUrl = (count: number, size: number) => {
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext("2d");
   if (ctx) {
-    ctx.font = `${size * 0.8}px sans-serif`;
-    ctx.textBaseline = "middle";
+    ctx.beginPath();
+    ctx.arc(size / 2, size / 2, size / 2 - 2, 0, Math.PI * 2);
+    ctx.fillStyle = "#662510";
+    ctx.fill();
+    ctx.strokeStyle = "white";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = "white";
+    ctx.font = `bold ${Math.round(size * 0.4)}px sans-serif`;
     ctx.textAlign = "center";
-    ctx.fillText(emoji, size / 2, size / 2);
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(count), size / 2, size / 2 + 1);
   }
   return canvas.toDataURL();
 };
 
-// 投稿一覧マーカーを、現在のズームに合わせたサイズで作り直す
-function renderMarkers(map: any, reports: Report[], markersRef: { current: any[] }) {
+// クラスタリングして、現在のズームに応じたマーカー（個別ピン or 集約ピン）を描画
+function renderMarkers(
+  map: any,
+  reports: Report[],
+  markersRef: { current: any[] },
+  clusterIndexRef: { current: Supercluster | null }
+) {
   markersRef.current.forEach((m) => map.removeAnnotation(m));
 
-  const size = getIconSizeForSpan(map.region.span.latitudeDelta);
-  const icon = createEmojiIconUrl("🪳", size); // 表示したいサイズそのもので都度生成する（使い回さない）
+  if (!clusterIndexRef.current) {
+    clusterIndexRef.current = new Supercluster({ radius: 60, maxZoom: 20 });
+  }
+  clusterIndexRef.current.load(
+    reports.map((r) => ({
+      type: "Feature",
+      properties: { report: r },
+      geometry: { type: "Point", coordinates: [r.lng, r.lat] },
+    })) as any
+  );
 
-  const newMarkers = reports.map((report) => {
-    const coordinate = new window.mapkit.Coordinate(report.lat, report.lng);
-    return new window.mapkit.ImageAnnotation(coordinate, {
-      url: { 1: icon },
-      size: { width: size, height: size },
-      title: report.building_name,
-      calloutEnabled: true,
-    });
+  const span = map.region.span;
+  const center = map.region.center;
+  const bbox: [number, number, number, number] = [
+    center.longitude - span.longitudeDelta / 2,
+    center.latitude - span.latitudeDelta / 2,
+    center.longitude + span.longitudeDelta / 2,
+    center.latitude + span.latitudeDelta / 2,
+  ];
+  const zoom = Math.max(0, Math.min(20, Math.round(Math.log2(360 / span.longitudeDelta))));
+  const clusters = clusterIndexRef.current.getClusters(bbox, zoom);
+
+  const newMarkers = clusters.map((c: any) => {
+    const [lng, lat] = c.geometry.coordinates;
+    const coordinate = new window.mapkit.Coordinate(lat, lng);
+
+    if (c.properties.cluster) {
+      const count = c.properties.point_count;
+      const size = getClusterIconSize(count);
+      const icon = createClusterIconUrl(count, size);
+      const annotation = new window.mapkit.ImageAnnotation(coordinate, {
+        url: { 1: icon },
+        size: { width: size, height: size },
+      });
+      annotation.addEventListener("select", () => {
+        const expansionZoom = Math.min(
+          clusterIndexRef.current!.getClusterExpansionZoom(c.properties.cluster_id),
+          20
+        );
+        const newSpanDeg = 360 / Math.pow(2, expansionZoom);
+        map.setRegionAnimated(
+          new window.mapkit.CoordinateRegion(
+            new window.mapkit.Coordinate(lat, lng),
+            new window.mapkit.CoordinateSpan(newSpanDeg, newSpanDeg)
+          )
+        );
+      });
+      return annotation;
+    }
+
+    const report: Report = c.properties.report;
+    const size = getIconSizeForSpan(span.latitudeDelta);
+
+    const annotation = new window.mapkit.Annotation(
+      coordinate,
+      () => {
+        const div = document.createElement("div");
+        div.style.width = "24px";
+        div.style.height = "24px";
+        div.style.display = "flex";
+        div.style.alignItems = "center";
+        div.style.justifyContent = "center";
+        div.style.fontSize = "20px";
+        div.style.cursor = "grab";
+        div.style.touchAction = "none";
+        div.textContent = "🪳";
+        return div;
+      },
+      { calloutEnabled: true }
+    );
+
+    annotation.callout = {
+      calloutElementForAnnotation: () => {
+        const el = document.createElement("div");
+        el.style.cssText =
+          "background:white;border-radius:10px;padding:10px 14px;box-shadow:0 2px 10px rgba(0,0,0,0.15);min-width:160px;";
+        el.innerHTML = `
+          <div style="font-size:13px;font-weight:700;color:#1f2937;margin-bottom:4px;">${report.building_name}</div>
+          <div style="font-size:11px;color:#6b7280;">${report.period_year}年${report.period_month}月・${report.species}</div>
+        `;
+        return el;
+      },
+    };
+
+    return annotation;
   });
 
   map.addAnnotations(newMarkers);
@@ -101,6 +191,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   const mapRef = useRef<any>(null);
   const reportMarkerRef = useRef<any>(null);
   const markersRef = useRef<any[]>([]);
+  const clusterIndexRef = useRef<Supercluster | null>(null);
   const [reports, setReports] = useState<Report[]>([]);
 
   const isSelectingRef = useRef(isSelecting);
@@ -108,7 +199,6 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   const reportPosRef = useRef(reportPos);
   const reportsRef = useRef<Report[]>([]);
 
-  // コールバック関数を常に最新の状態に保つためのRef
   const onStartInputRef = useRef(onStartInput);
   const onCancelRef = useRef(onCancel);
 
@@ -145,7 +235,6 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     fetchReports();
   }, [refreshTrigger]);
 
-  // 地図の初期化
   useEffect(() => {
     if (!mapContainerRef.current) return;
     let cancelled = false;
@@ -170,6 +259,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
           new window.mapkit.Coordinate(36.5, 138.5),
           new window.mapkit.CoordinateSpan(20, 24)
         ),
+        showsZoomControl: false,
         showsCompass: "hidden",
         isRotationEnabled: false,
         showsUserLocationControl: true,
@@ -177,14 +267,12 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
       mapRef.current = map;
 
-      // ズームの変化を定期的にチェックして、変わっていたらマーカーを作り直す
       let lastSpan = map.region.span.latitudeDelta;
       zoomCheckInterval = setInterval(() => {
         const currentSpan = map.region.span.latitudeDelta;
-        // 10%以上変化したら「ズームが変わった」とみなす
         if (Math.abs(currentSpan - lastSpan) / lastSpan > 0.1) {
           lastSpan = currentSpan;
-          renderMarkers(map, reportsRef.current, markersRef);
+          renderMarkers(map, reportsRef.current, markersRef, clusterIndexRef);
         }
       }, 400);
 
@@ -229,16 +317,13 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     };
   }, []);
 
-  // 既存の投稿マーカーの更新
   useEffect(() => {
     reportsRef.current = reports;
     if (!mapRef.current) return;
-    renderMarkers(mapRef.current, reports, markersRef);
+    renderMarkers(mapRef.current, reports, markersRef, clusterIndexRef);
   }, [reports]);
 
-  // 新規投稿用ドラッグマーカーの生成管理
   useEffect(() => {
-    // マップのインスタンスを変数に確保して、タイミングによるエラーを防ぐ
     const currentMap = mapRef.current;
     if (!currentMap) return;
 
@@ -248,14 +333,14 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     }
 
     if (reportPos) {
-      currentMap.isZoomEnabled = false; // ピン配置中はズーム操作を禁止
+      currentMap.isZoomEnabled = false;
       const coordinate = new window.mapkit.Coordinate(reportPos.lat, reportPos.lng);
 
       const annotation = new window.mapkit.Annotation(
         coordinate,
         () => {
           const div = document.createElement("div");
-          div.style.fontSize = "20px";
+          div.style.fontSize = "22px";
           div.style.cursor = "grab";
           div.style.touchAction = "none";
           div.textContent = "🪳";
@@ -272,7 +357,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
             if (!isDragging && Math.hypot(dx, dy) > DRAG_THRESHOLD) {
               isDragging = true;
               div.style.cursor = "grabbing";
-              currentMap.isScrollEnabled = false; // ドラッグ中は地図のスクロールを止める
+              currentMap.isScrollEnabled = false;
             }
 
             if (isDragging) {
@@ -290,7 +375,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
             window.removeEventListener("pointermove", onPointerMove);
             window.removeEventListener("pointerup", onPointerUp);
             div.style.cursor = "grab";
-            currentMap.isScrollEnabled = true; // 地図のスクロールを元に戻す
+            currentMap.isScrollEnabled = true;
 
             if (isDragging) {
               if (reportPosRef.current) {
@@ -312,38 +397,39 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
           return div;
         },
-        { draggable: false, calloutEnabled: true }
+        {
+          draggable: false,
+          calloutEnabled: true,
+          calloutOffset: new DOMPoint(-10.5,17), // ← この2つの数字だけ動かして微調整してください
+        }
       );
 
-      // 吹き出し（コールアウト）の中身
       annotation.callout = {
         calloutElementForAnnotation: () => {
           const container = document.createElement("div");
           container.style.textAlign = "center";
           container.style.minWidth = "200px";
           container.innerHTML = `
-            <p style="margin:0 0 4px;font-size:13px;">ドラッグして位置を調整してください</p>
-            <p style="margin:0 0 8px;font-size:11px;color:#9ca3af;">※地図をタップしても移動できます</p>
+            <p style="margin:0 0 12px;font-size:13px;color:#292524;">ドラッグして位置を調整してください</p>
           `;
-
-          const inputBtn = document.createElement("button");
-          inputBtn.textContent = "目撃情報を入力";
-          inputBtn.style.cssText =
-            "background:#ef4444;color:white;border:none;padding:8px 12px;border-radius:6px;cursor:pointer;margin-right:6px;font-size:13px;";
-          inputBtn.onclick = () => {
-            // Refから最新の関数を呼び出すことで、ドラッグ後の最新の座標を親に伝える
-            onStartInputRef.current(annotation.coordinate.latitude, annotation.coordinate.longitude);
-          };
 
           const cancelBtn = document.createElement("button");
           cancelBtn.textContent = "キャンセル";
           cancelBtn.style.cssText =
-            "background:#f3f4f6;border:1px solid #ddd;padding:8px 12px;border-radius:6px;cursor:pointer;font-size:13px;";
+            "background:transparent;color:#662510;border:1.5px solid #662510;padding:8px 14px;border-radius:8px;cursor:pointer;margin-right:6px;font-size:13px;font-weight:600;";
           cancelBtn.onclick = () => onCancelRef.current();
 
+          const inputBtn = document.createElement("button");
+          inputBtn.textContent = "目撃情報を入力";
+          inputBtn.style.cssText =
+            "background:#662510;color:white;border:none;padding:8px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;";
+          inputBtn.onclick = () => {
+            onStartInputRef.current(annotation.coordinate.latitude, annotation.coordinate.longitude);
+          };
+
           const btnRow = document.createElement("div");
-          btnRow.appendChild(inputBtn);
           btnRow.appendChild(cancelBtn);
+          btnRow.appendChild(inputBtn);
           container.appendChild(btnRow);
 
           return container;
@@ -353,10 +439,10 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       currentMap.addAnnotation(annotation);
       currentMap.selectedAnnotation = annotation;
       reportMarkerRef.current = annotation;
-      } else {
-        currentMap.isZoomEnabled = true; // ピンがなくなったらズームを再度許可
+    } else {
+      currentMap.isZoomEnabled = true;
     }
-  }, [reportPos]); // 依存配列から親の関数を除外し、勝手にリセットされるのを防ぐ
+  }, [reportPos]);
 
   const handleSearch = (
     lat: number,

@@ -182,41 +182,43 @@ export default function ReportSidebar({ lat, lng, prefecture, city, address, onC
           <option>卵も発見</option>
         </select>
 
+
         <div style={{ display: "flex", gap: "12px" }}>
-          <button
-            onClick={handleSubmit}
-            disabled={loading}
-            style={{
-              flex: 1,
-              padding: "14px",
-              background: "#ef4444",
-              color: "white",
-              border: "none",
-              borderRadius: "8px",
-              fontWeight: "bold",
-              fontSize: "14px",
-              cursor: "pointer",
-            }}
-          >
-            {loading ? "送信中..." : "投稿する"}
-          </button>
-          <button
-            onClick={onClose}
-            style={{
-              flex: 1,
-              padding: "14px",
-              background: "#f3f4f6",
-              color: "#111",
-              border: "1px solid #ddd",
-              borderRadius: "8px",
-              fontWeight: "bold",
-              fontSize: "14px",
-              cursor: "pointer",
-            }}
-          >
-            キャンセル
-          </button>
-        </div>
+  <button
+    onClick={onClose}
+    style={{
+      flex: 1,
+      padding: "14px",
+      background: "transparent",
+      color: "#662510",
+      border: "1.5px solid #662510",
+      borderRadius: "8px",
+      fontWeight: "bold",
+      fontSize: "14px",
+      cursor: "pointer",
+    }}
+  >
+    キャンセル
+  </button>
+  <button
+    onClick={handleSubmit}
+    disabled={loading}
+    style={{
+      flex: 1,
+      padding: "14px",
+      background: "#662510",
+      color: "white",
+      border: "none",
+      borderRadius: "8px",
+      fontWeight: "bold",
+      fontSize: "14px",
+      cursor: "pointer",
+    }}
+  >
+    {loading ? "送信中..." : "投稿する"}
+  </button>
+</div>
+
       </div>
     </div>
   );

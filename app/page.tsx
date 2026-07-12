@@ -120,44 +120,102 @@ export default function Home() {
           </div>
         )}
         {step === "selecting" && (
-          <div style={{
-            position: "absolute",
-            top: "70px",
-            left: "50%",
-            transform: "translateX(-50%)",
-            background: "rgba(0,0,0,0.75)",
-            color: "white",
-            padding: "10px 20px",
-            borderRadius: "24px",
-            fontSize: "14px",
-            zIndex: 1000,
-            pointerEvents: "none",
-          }}>
-            📍 建物をタップしてください
-          </div>
-        )}
+  <div style={{
+    position: "absolute",
+    bottom: "120px",
+    left: "50%",
+    transform: "translateX(-50%)",
+    background: "rgba(255,255,255,0.95)",
+    color: "#292524",
+    padding: "10px 20px",
+    borderRadius: "24px",
+    fontSize: "14px",
+    fontWeight: 600,
+    boxShadow: "0 2px 10px rgba(0,0,0,0.15)",
+    zIndex: 1000,
+    pointerEvents: "none",
+  }}>
+    建物をタップしてください
+  </div>
+)}
 
         {step === "idle" && (
-          <button
-            onClick={handleStartReport}
-            style={{
-              position: "absolute",
-              bottom: "80px",
-              right: "32px",
-              background: "#ef4444",
-              color: "white",
-              padding: "16px 24px",
-              borderRadius: "50px",
-              border: "none",
-              fontSize: "16px",
-              fontWeight: "bold",
-              cursor: "pointer",
-              zIndex: 500,
-              boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-            }}
-          >
-            🪳 報告する
-          </button>
+         <>
+  <style>{`
+    @keyframes pulse-ring {
+      0% { transform: scale(0.95); opacity: 0.3; }
+      100% { transform: scale(1.5); opacity: 0; }
+    }
+  `}</style>
+
+  <div
+    style={{
+      position: "absolute",
+      bottom: "25px",
+      right: "25px",
+      display: "flex",
+      alignItems: "center",
+      gap: "10px",
+      zIndex: 500,
+    }}
+  >
+    {/* ラベル部分 */}
+    <div
+      style={{
+        background: "#ffffff73",
+        backdropFilter: "blur(8px)",
+        WebkitBackdropFilter: "blur(8px)",
+        borderRadius: "10px",
+        padding: "14px 18px",
+        boxShadow: "0 2px 14px rgba(0,0,0,0.1)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <div style={{ fontSize: "14px",fontWeight: "500", color: "rgb(51, 54, 57)" }}>
+        目撃情報を報告する
+      </div>
+    </div>
+
+    {/* ボタン部分 */}
+    <div style={{ position: "relative", width: "52px", height: "52px" }}>
+      {/* 波紋アニメーション */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          borderRadius: "50%",
+          background: "#662510", /* 先ほど選定したゴキブリカラー */
+          animation: "pulse-ring 2s ease-out infinite",
+        }}
+      />
+      
+      {/* メインボタン */}
+      <button
+        onClick={handleStartReport}
+        style={{
+          position: "absolute",
+          inset: 0,
+          borderRadius: "50%",
+          background: "#662510", /* 先ほど選定したゴキブリカラー */
+          border: "none",
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+          color: "white", /* 文字色を白に */
+          fontSize: "24px", /* Gを大きく表示 */
+          fontWeight: "600", /* Gを太字に */
+          fontFamily: "Arial, sans-serif", /* 視認性の高いゴシック体 */
+          lineHeight: 1,
+          padding: 0,
+        }}
+      >
+        G
+      </button>
+    </div>
+  </div>
+</>
         )}
 
         {step === "inputting" && pos && (
