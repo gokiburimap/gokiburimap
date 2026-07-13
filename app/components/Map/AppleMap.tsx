@@ -42,23 +42,29 @@ declare global {
 
 const ZOOM_THRESHOLD = 0.002;
 
-const MIN_SPAN = 0.01;
-const MAX_SPAN = 20;
-const MIN_ICON_SIZE = 8;
-const MAX_ICON_SIZE = 20;
+// クラスタの分岐をここで止める（これ以上ズームしても分岐しない＝個別の建物が特定できる状態にはならない）
+const FREEZE_ZOOM = 15;
 
-function getIconSizeForSpan(latitudeDelta: number) {
-  const clamped = Math.min(Math.max(latitudeDelta, MIN_SPAN), MAX_SPAN);
-  const t =
-    (Math.log(clamped) - Math.log(MIN_SPAN)) /
-    (Math.log(MAX_SPAN) - Math.log(MIN_SPAN));
-  const size = MAX_ICON_SIZE - t * (MAX_ICON_SIZE - MIN_ICON_SIZE);
-  return Math.round(size);
-}
+// 円が表す「実世界の半径」の目安（メートル）。ズームインするとこの半径が画面上で大きく表示される。
+const REAL_RADIUS_METERS = 110;
+const METERS_PER_DEGREE_LAT = 111320;
 
-function getClusterIconSize(count: number) {
-  const size = 32 + Math.log2(count) * 6;
-  return Math.round(Math.min(Math.max(size, 32), 56));
+// 地図の表示範囲(緯度スパン)とコンテナの高さから、実世界基準の円の直径(px)を計算する
+// ズームインする(=latitudeDeltaが小さくなる)ほど、同じ実世界サイズが画面上では大きく見える
+function getZoomScaledCircleSize(
+  latitudeDelta: number,
+  containerHeightPx: number,
+  count: number
+) {
+  const degreesForRadius = REAL_RADIUS_METERS / METERS_PER_DEGREE_LAT;
+  const pixelsPerDegree = containerHeightPx / latitudeDelta;
+  let diameterPx = degreesForRadius * pixelsPerDegree * 2;
+
+  // 件数が多いクラスタは、補助的にわずかに大きく見せる
+  diameterPx += Math.log2(count + 1) * 4;
+
+  // 極端に小さい/巨大になりすぎないようclamp
+  return Math.round(Math.min(Math.max(diameterPx, 28), 160));
 }
 
 const createClusterIconUrl = (count: number, size: number) => {
@@ -67,15 +73,22 @@ const createClusterIconUrl = (count: number, size: number) => {
   canvas.height = size;
   const ctx = canvas.getContext("2d");
   if (ctx) {
+    // 件数に応じて塗りの濃さを決める（多いほど濃く、ただし上限あり）
+    // 対数スケールにしているのは、件数の桁が増えても急激に濃くなりすぎないようにするため
+    const opacity = Math.min(0.15 + Math.log10(count + 1) * 0.18, 0.65);
+
     ctx.beginPath();
     ctx.arc(size / 2, size / 2, size / 2 - 2, 0, Math.PI * 2);
-    ctx.fillStyle = "#662510";
+    ctx.fillStyle = `rgba(102, 37, 16, ${opacity})`; // #662510 をopacity付きで
     ctx.fill();
     ctx.strokeStyle = "white";
     ctx.lineWidth = 2;
     ctx.stroke();
-    ctx.fillStyle = "white";
-    ctx.font = `bold ${Math.round(size * 0.4)}px sans-serif`;
+
+    ctx.fillStyle = "#292524"; // 白文字→ブランドと調和するダーク文字に変更（薄い塗りの上でも読みやすいように）
+    const digits = String(count).length;
+    const fontScale = digits <= 2 ? 0.4 : digits === 3 ? 0.34 : digits === 4 ? 0.28 : 0.22;
+    ctx.font = `bold ${Math.round(size * fontScale)}px sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(String(count), size / 2, size / 2 + 1);
@@ -88,12 +101,14 @@ function renderMarkers(
   map: any,
   reports: Report[],
   markersRef: { current: any[] },
-  clusterIndexRef: { current: Supercluster | null }
+  clusterIndexRef: { current: Supercluster | null },
+  containerEl: HTMLDivElement | null
 ) {
   markersRef.current.forEach((m) => map.removeAnnotation(m));
 
   if (!clusterIndexRef.current) {
-    clusterIndexRef.current = new Supercluster({ radius: 60, maxZoom: 20 });
+    // maxZoomをFREEZE_ZOOMに固定 → これ以上はクラスタが分岐しない（＝個別ピンが露出しない）
+    clusterIndexRef.current = new Supercluster({ radius: 60, maxZoom: FREEZE_ZOOM });
   }
   clusterIndexRef.current.load(
     reports.map((r) => ({
@@ -111,25 +126,33 @@ function renderMarkers(
     center.longitude + span.longitudeDelta / 2,
     center.latitude + span.latitudeDelta / 2,
   ];
-  const zoom = Math.max(0, Math.min(20, Math.round(Math.log2(360 / span.longitudeDelta))));
+  const rawZoom = Math.max(0, Math.min(20, Math.round(Math.log2(360 / span.longitudeDelta))));
+  const zoom = Math.min(rawZoom, FREEZE_ZOOM); // ここでも二重にclampして安全側に倒す
   const clusters = clusterIndexRef.current.getClusters(bbox, zoom);
+
+  const containerHeightPx = containerEl?.clientHeight ?? 600;
 
   const newMarkers = clusters.map((c: any) => {
     const [lng, lat] = c.geometry.coordinates;
     const coordinate = new window.mapkit.Coordinate(lat, lng);
 
-    if (c.properties.cluster) {
-      const count = c.properties.point_count;
-      const size = getClusterIconSize(count);
-      const icon = createClusterIconUrl(count, size);
-      const annotation = new window.mapkit.ImageAnnotation(coordinate, {
-        url: { 1: icon },
-        size: { width: size, height: size },
-      });
+    // クラスタでも単独点でも、必ず同じ「円+件数」のデザインで統一する
+    // （単独1件だけ生の建物名ピンが出てしまうと、匿名化の目的が崩れるため）
+    const isCluster = !!c.properties.cluster;
+    const count = isCluster ? c.properties.point_count : 1;
+    const size = getZoomScaledCircleSize(span.latitudeDelta, containerHeightPx, count);
+    const icon = createClusterIconUrl(count, size);
+
+    const annotation = new window.mapkit.ImageAnnotation(coordinate, {
+      url: { 1: icon },
+      size: { width: size, height: size },
+    });
+
+    if (isCluster) {
       annotation.addEventListener("select", () => {
         const expansionZoom = Math.min(
           clusterIndexRef.current!.getClusterExpansionZoom(c.properties.cluster_id),
-          20
+          FREEZE_ZOOM
         );
         const newSpanDeg = 360 / Math.pow(2, expansionZoom);
         map.setRegionAnimated(
@@ -139,42 +162,8 @@ function renderMarkers(
           )
         );
       });
-      return annotation;
     }
-
-    const report: Report = c.properties.report;
-    const size = getIconSizeForSpan(span.latitudeDelta);
-
-    const annotation = new window.mapkit.Annotation(
-      coordinate,
-      () => {
-        const div = document.createElement("div");
-        div.style.width = "24px";
-        div.style.height = "24px";
-        div.style.display = "flex";
-        div.style.alignItems = "center";
-        div.style.justifyContent = "center";
-        div.style.fontSize = "20px";
-        div.style.cursor = "grab";
-        div.style.touchAction = "none";
-        div.textContent = "🪳";
-        return div;
-      },
-      { calloutEnabled: true }
-    );
-
-    annotation.callout = {
-      calloutElementForAnnotation: () => {
-        const el = document.createElement("div");
-        el.style.cssText =
-          "background:white;border-radius:10px;padding:10px 14px;box-shadow:0 2px 10px rgba(0,0,0,0.15);min-width:160px;";
-        el.innerHTML = `
-          <div style="font-size:13px;font-weight:700;color:#1f2937;margin-bottom:4px;">${report.building_name}</div>
-          <div style="font-size:11px;color:#6b7280;">${report.period_year}年${report.period_month}月・${report.species}</div>
-        `;
-        return el;
-      },
-    };
+    // 単独の点(count=1)はタップしても拡大ズームしない（これ以上分解できる情報を持たないため）
 
     return annotation;
   });
@@ -194,6 +183,9 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   const clusterIndexRef = useRef<Supercluster | null>(null);
   const [reports, setReports] = useState<Report[]>([]);
 
+  // 画面右上に常時表示する「今の表示範囲内の目撃件数」
+  const [visibleCount, setVisibleCount] = useState(0);
+
   const isSelectingRef = useRef(isSelecting);
   const onMapClickRef = useRef(onMapClick);
   const reportPosRef = useRef(reportPos);
@@ -201,6 +193,24 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
   const onStartInputRef = useRef(onStartInput);
   const onCancelRef = useRef(onCancel);
+
+  // 現在の地図の表示範囲(bounding box)に入っている投稿件数を数えて state に反映する
+  const updateVisibleCount = () => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const region = map.region;
+    const latMin = region.center.latitude - region.span.latitudeDelta / 2;
+    const latMax = region.center.latitude + region.span.latitudeDelta / 2;
+    const lngMin = region.center.longitude - region.span.longitudeDelta / 2;
+    const lngMax = region.center.longitude + region.span.longitudeDelta / 2;
+
+    const count = reportsRef.current.filter(
+      (r) => r.lat >= latMin && r.lat <= latMax && r.lng >= lngMin && r.lng <= lngMax
+    ).length;
+
+    setVisibleCount(count);
+  };
 
   useEffect(() => {
     isSelectingRef.current = isSelecting;
@@ -227,8 +237,30 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   }));
 
   const fetchReports = async () => {
-    const { data } = await supabase.from("reports").select("*");
-    if (data) setReports(data);
+    const PAGE_SIZE = 1000;
+    let allReports: any[] = [];
+    let from = 0;
+
+    while (true) {
+      const { data, error } = await supabase
+        .from("reports")
+        .select("*")
+        .order("id", { ascending: true }) // ← 並び順を固定（これが無いと取りこぼしが起きる）
+        .range(from, from + PAGE_SIZE - 1);
+
+      if (error) {
+        console.error("reports取得エラー:", error);
+        break;
+      }
+      if (!data || data.length === 0) break;
+
+      allReports = allReports.concat(data);
+
+      if (data.length < PAGE_SIZE) break; // 最後のページまで取り終えた
+      from += PAGE_SIZE;
+    }
+
+    setReports(allReports);
   };
 
   useEffect(() => {
@@ -272,9 +304,13 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         const currentSpan = map.region.span.latitudeDelta;
         if (Math.abs(currentSpan - lastSpan) / lastSpan > 0.1) {
           lastSpan = currentSpan;
-          renderMarkers(map, reportsRef.current, markersRef, clusterIndexRef);
+          renderMarkers(map, reportsRef.current, markersRef, clusterIndexRef, mapContainerRef.current);
         }
       }, 400);
+
+      // パン・ズーム操作が終わるたびに、右上の目撃件数を再計算する
+      map.addEventListener("region-change-end", updateVisibleCount);
+      updateVisibleCount();
 
       map.addEventListener("single-tap", async (event: any) => {
         if (!isSelectingRef.current && !reportPosRef.current) return;
@@ -311,6 +347,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       cancelled = true;
       if (zoomCheckInterval) clearInterval(zoomCheckInterval);
       if (mapRef.current) {
+        mapRef.current.removeEventListener("region-change-end", updateVisibleCount);
         mapRef.current.destroy();
         mapRef.current = null;
       }
@@ -320,7 +357,8 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   useEffect(() => {
     reportsRef.current = reports;
     if (!mapRef.current) return;
-    renderMarkers(mapRef.current, reports, markersRef, clusterIndexRef);
+    renderMarkers(mapRef.current, reports, markersRef, clusterIndexRef, mapContainerRef.current);
+    updateVisibleCount(); // データが更新されたら件数も再計算
   }, [reports]);
 
   useEffect(() => {
@@ -400,7 +438,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         {
           draggable: false,
           calloutEnabled: true,
-          calloutOffset: new DOMPoint(-10.5,17), // ← この2つの数字だけ動かして微調整してください
+          calloutOffset: new DOMPoint(-10.5, 17), // ← この2つの数字だけ動かして微調整してください
         }
       );
 
@@ -469,6 +507,26 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <SearchBar onSearch={handleSearch} />
+
+      {/* 常時表示：現在の表示範囲内の目撃件数 */}
+      <div
+        style={{
+          position: "absolute",
+          top: 16,
+          right: 16,
+          background: "white",
+          borderRadius: 10,
+          padding: "8px 14px",
+          boxShadow: "0 2px 10px rgba(0,0,0,0.15)",
+          fontSize: 13,
+          fontWeight: 700,
+          color: "#292524",
+          zIndex: 10,
+        }}
+      >
+        目撃件数 {visibleCount.toLocaleString()}件
+      </div>
+
       <div ref={mapContainerRef} style={{ width: "100%", height: "100%" }} />
     </div>
   );
