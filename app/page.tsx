@@ -17,6 +17,25 @@ interface GeoData {
   address: string;
 }
 
+// ============================================================
+// 🪳 投稿直後の確認ピン用の型（2026-07-18 追加）
+//
+// AppleMap.tsx / ReportSidebar.tsx にも同じ型がある。
+// DBの項目を変えるときは、3ファイルすべてを揃えること。
+//
+// ★detail だけは特別★
+//   DBの reports テーブルには存在しない。投稿直後に本人へ内容を
+//   見せるためだけに、メモリ上で持ち回す値。
+// ============================================================
+interface Report {
+  id: number;
+  lat: number;
+  lng: number;
+  address?: string;
+  occurred_on?: string; // "2026-07-18" 形式
+  detail?: string;
+}
+
 interface MapHandle {
   isZoomedInEnough: () => boolean;
 }
@@ -28,6 +47,26 @@ export default function Home() {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const mapRef = useRef<MapHandle | null>(null);
   const [showZoomWarning, setShowZoomWarning] = useState(false);
+  // ============================================================
+  // 🚫 投稿できない場所をタップしたときの警告（2026-07-18 追加）
+  // ズーム警告(showZoomWarning)と同じ仕組み。海外・海などをタップすると
+  // trueになり、画面のどこかを押すと消える。
+  // ============================================================
+  const [showOutOfServiceWarning, setShowOutOfServiceWarning] = useState(false);
+
+  // ============================================================
+  // 🪳 投稿直後の確認ピン（2026-07-18 追加）
+  //
+  // 投稿が成功したときだけ、ここに投稿内容が入る。
+  // 地図側(AppleMap.tsx)はこの値を見て、その場にゴキブリを立てて
+  // 吹き出しで内容を表示する。
+  //
+  // ★これはReactのstate（ブラウザのメモリ）に一時的に置いているだけ★
+  //   ・ページを更新する、サイトから離脱する → 自動的に消える
+  //   ・その後は通常通り霧だけが残る
+  //   ・DBには一切保存しないので、他人には絶対に見えない
+  // ============================================================
+  const [justPosted, setJustPosted] = useState<Report | null>(null);
 
   const handleStartReport = () => {
     if (mapRef.current && !mapRef.current.isZoomedInEnough()) {
@@ -35,6 +74,8 @@ export default function Home() {
       setShowZoomWarning(true);
       return;
     }
+    // 新しく報告を始めるときは、前回の確認ピンを片付けておく
+    setJustPosted(null);
     setStep("selecting");
   };
 
@@ -60,10 +101,22 @@ export default function Home() {
     setGeoData(null);
   };
 
-  const handleSubmitDone = () => {
+  // ============================================================
+  // 投稿完了時の処理（2026-07-18 変更）
+  //
+  // ★ReportSidebar側から、投稿した内容(report)を受け取れるようにした。
+  //   受け取れた場合だけ、その場に確認ピンを立てる。
+  //   受け取れなかった場合(report===undefined)は、従来通り何も立てずに
+  //   霧だけが増える。＝ ReportSidebarを直す前でもエラーにはならない。
+  //
+  //   ReportSidebar.tsx 側で必要な変更は「onSubmitDone() を
+  //   onSubmitDone(投稿したデータ) に変える」だけ。詳細は納品メモを参照。
+  // ============================================================
+  const handleSubmitDone = (report?: Report) => {
     setStep("idle");
     setPos(null);
     setGeoData(null);
+    setJustPosted(report ?? null);
     setRefreshTrigger(n => n + 1);
   };
 
@@ -88,6 +141,9 @@ export default function Home() {
           onStartInput={handleStartInput}
           onCancel={handleCancel}
           refreshTrigger={refreshTrigger}
+          justPosted={justPosted}
+          onDismissJustPosted={() => setJustPosted(null)}
+          onOutOfService={() => setShowOutOfServiceWarning(true)}
         />
         
         {showZoomWarning && (
@@ -119,6 +175,41 @@ export default function Home() {
             </div>
           </div>
         )}
+
+        {/* ============================================================
+            🚫 投稿できない場所の警告（2026-07-18 追加）
+            ズーム警告と全く同じ作り。画面のどこかを押すと消える。
+            ★文言を変えたいときは、下の「この場所には投稿できません」を直す★
+           ============================================================ */}
+        {showOutOfServiceWarning && (
+          <div
+            onClick={() => setShowOutOfServiceWarning(false)}
+            style={{
+              position: "absolute",
+              inset: 0,
+              zIndex: 2000,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+            }}
+          >
+            <div
+              style={{
+                background: "rgba(255,255,255,0.95)",
+                padding: "16px 28px",
+                borderRadius: "12px",
+                boxShadow: "0 4px 16px rgba(0,0,0,0.2)",
+                fontSize: "14px",
+                color: "#111",
+                textAlign: "center",
+                whiteSpace: "nowrap",
+              }}
+            >
+              この場所には投稿できません
+            </div>
+          </div>
+        )}
         {step === "selecting" && (
   <div style={{
     position: "absolute",
@@ -135,7 +226,7 @@ export default function Home() {
     zIndex: 1000,
     pointerEvents: "none",
   }}>
-    建物をタップしてください
+    目撃した場所をタップしてください
   </div>
 )}
 

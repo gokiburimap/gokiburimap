@@ -29,6 +29,7 @@ export default function RootLayout({
     >
       <head>
         <script src="https://cdn.apple-mapkit.com/mk/5.x.x/mapkit.js" crossOrigin="anonymous" async></script>
+        <link rel="preload" as="image" href="/roach-icon.png" />
       </head>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>

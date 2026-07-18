@@ -2,17 +2,48 @@
 //
 // テスト用：全国の主要都市を中心に、ダミーの投稿データ（reportsテーブル）を
 // 大量にバルクインサートするスクリプト。
-// クラスタリング／エリア集計の見た目確認用。どうせ本番前にDBリセットする前提。
+// クラスタリング／霧（ヒートマップ）の見た目確認用。本番前に全削除する前提。
+//
+// ★2026-07-18 全面改訂★
+// ・新DB構成に対応：カラムは lat / lng / occurred_on のみ
+//   （building_name / position / species / situation / building_id 等は廃止済み）
+// ・PostGIS対応：投入前後にSQLの実行が必要（下の【重要】を必ず読むこと）
+//
+// ============================================================
+// 【重要】PostGIS導入後の投入手順（3ステップ）
+//
+// reportsにはINSERTのたびに「半径120m以内の件数を数え直す」トリガーが
+// 付いている。数万件を入れると数万回の数え直しが走って非常に遅くなるため、
+// 大量投入時はトリガーを止めてから入れ、最後に1回だけ全件再計算する。
+//
+// ステップ1：SupabaseのSQL Editorで、トリガーを一時停止
+//   alter table reports disable trigger trg_reports_nearby_insert;
+//   alter table reports disable trigger trg_reports_nearby_delete;
+//
+// ステップ2：このスクリプトを実行
+//   node scripts/seed-test-data.mjs 25000
+//
+// ステップ3：SQL Editorで、トリガー再開＋全件再計算（★忘れると色が全部青緑のままになる★）
+//   alter table reports enable trigger trg_reports_nearby_insert;
+//   alter table reports enable trigger trg_reports_nearby_delete;
+//   select recalc_all_nearby_counts();
+//
+// ※少量（数百件まで）ならトリガーを止めずに実行しても問題ない。
+//   その場合はステップ1・3は不要（nearby_countはトリガーが埋めてくれる）。
+// ============================================================
 //
 // 使い方：
 //   node scripts/seed-test-data.mjs 5000
 //   node scripts/seed-test-data.mjs 5000 --clear   ← 実行前にreportsを全削除してから投入
+//   node scripts/seed-test-data.mjs 500 --lat=35.68 --lng=139.76 --spread=0.003
+//                                                  ← 指定地点の周辺だけに密集投入
 //
 // 事前準備：
 //   npm install @supabase/supabase-js dotenv
-//   .env.local に SUPABASE_SERVICE_ROLE_KEY を追加（Supabase管理画面 > Settings > API から取得）
+//   .env.local に SUPABASE_SERVICE_ROLE_KEY を追加（Supabase管理画面 > Settings > Data API から取得）
 //   ⚠ service_role キーはRLSを無視できる強力なキー。絶対にフロントに埋め込まない・Gitに上げない。
 //     .env.local は既に .gitignore 済みのはずなので、そこに追記するだけでOK。
+//     （reportsにINSERTポリシーが無くても、このキーなら投入できる）
 
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
@@ -61,10 +92,6 @@ const CITIES = [
   { name: '水戸', lat: 36.3418, lng: 140.4468, weight: 8, spread: 0.05 },
 ];
 
-const SPECIES = ['黒ゴキブリ', 'チャバネ', '不明'];
-const SITUATIONS = ['1匹', '複数', '卵も発見'];
-const POSITIONS = ['室内', '共用部', '駐車場・外周'];
-
 function pick(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
@@ -88,22 +115,24 @@ function gaussianJitter(spread) {
   return z * spread;
 }
 
+// 2024-01-01〜今日 のあいだのランダムな日付を "YYYY-MM-DD" で返す
+function randomOccurredOn() {
+  const start = new Date('2024-01-01').getTime();
+  const end = Date.now();
+  const d = new Date(start + Math.random() * (end - start));
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+// ★新DB構成：カラムは lat / lng / occurred_on のみ
 function makeFakeReport() {
   const city = pickCity();
-  const lat = city.lat + gaussianJitter(city.spread);
-  const lng = city.lng + gaussianJitter(city.spread);
-
   return {
-    building_name: `テスト投稿（${city.name}周辺）`,
-    address: `${city.name}近郊（テストデータ）`,
-    lat,
-    lng,
-    position: pick(POSITIONS),
-    period_year: 2024 + Math.floor(Math.random() * 3), // 2024〜2026
-    period_month: 1 + Math.floor(Math.random() * 12),
-    species: pick(SPECIES),
-    situation: pick(SITUATIONS),
-    building_id: null, // buildingsテーブルと紐づけ不要（テスト用なのでnull許容前提。制約がある場合は要調整）
+    lat: city.lat + gaussianJitter(city.spread),
+    lng: city.lng + gaussianJitter(city.spread),
+    occurred_on: randomOccurredOn(),
   };
 }
 
@@ -122,6 +151,8 @@ async function main() {
   const centerLng = getArg('lng');
   const customSpread = getArg('spread');
 
+  let generator = makeFakeReport;
+
   if (centerLat && centerLng) {
     const lat = Number(centerLat);
     const lng = Number(centerLng);
@@ -129,26 +160,17 @@ async function main() {
 
     console.log(`📍 指定地点 (${lat}, ${lng}) 周辺、半径目安${spread}度 に密集投稿します`);
 
-    makeFakeReport.__override = () => {
-      const jLat = lat + gaussianJitter(spread);
-      const jLng = lng + gaussianJitter(spread);
-      return {
-        building_name: `テスト投稿（指定地点周辺）`,
-        address: `指定地点周辺（テストデータ）`,
-        lat: jLat,
-        lng: jLng,
-        position: pick(POSITIONS),
-        period_year: 2024 + Math.floor(Math.random() * 3),
-        period_month: 1 + Math.floor(Math.random() * 12),
-        species: pick(SPECIES),
-        situation: pick(SITUATIONS),
-        building_id: null,
-      };
-    };
+    generator = () => ({
+      lat: lat + gaussianJitter(spread),
+      lng: lng + gaussianJitter(spread),
+      occurred_on: randomOccurredOn(),
+    });
   }
 
   if (shouldClear) {
     console.log('🗑  既存のreportsを削除中...');
+    // ★削除トリガーが有効なままだと、1行消すたびに数え直しが走って遅い。
+    //   大量削除の前も、上の【重要】と同様にトリガー停止を検討すること。
     const { error } = await supabase.from('reports').delete().neq('id', 0);
     if (error) {
       console.error('削除エラー:', error.message);
@@ -157,21 +179,25 @@ async function main() {
   }
 
   console.log(`🪳 ${count}件のテストデータを生成・投入します...`);
+  if (count > 500) {
+    console.log('');
+    console.log('⚠ 500件を超える投入です。トリガーを止めていない場合、非常に遅くなります。');
+    console.log('  ファイル冒頭の【重要】の3ステップ（トリガー停止→投入→再開＋全件再計算）を');
+    console.log('  実行しているか確認してください。');
+    console.log('');
+  }
 
   const BATCH_SIZE = 500; // Supabaseの1リクエストあたりの上限を考慮
   let inserted = 0;
 
   for (let i = 0; i < count; i += BATCH_SIZE) {
     const batchCount = Math.min(BATCH_SIZE, count - i);
-    const generator = makeFakeReport.__override ?? makeFakeReport;
     const rows = Array.from({ length: batchCount }, generator);
 
     const { error } = await supabase.from('reports').insert(rows);
 
     if (error) {
       console.error(`❌ バッチ ${i}-${i + batchCount} でエラー:`, error.message);
-      console.error('  → building_id が NOT NULL 制約の場合は、先にダミーのbuildingsレコードを');
-      console.error('    作成してそのidを使うよう本スクリプトを調整してください。');
       process.exit(1);
     }
 
@@ -180,6 +206,11 @@ async function main() {
   }
 
   console.log(`✅ 完了：${inserted}件のテストデータを投入しました。`);
+  console.log('');
+  console.log('★トリガーを止めて投入した場合は、SQL Editorで必ず以下を実行してください：');
+  console.log('  alter table reports enable trigger trg_reports_nearby_insert;');
+  console.log('  alter table reports enable trigger trg_reports_nearby_delete;');
+  console.log('  select recalc_all_nearby_counts();');
 }
 
 main();
