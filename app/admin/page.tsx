@@ -653,7 +653,7 @@ export default function AdminPage() {
             rel="noopener"
             style={{ ...btn(), textDecoration: "none", display: "inline-block" }}
           >
-            地図を管理者モードで開く（新しいタブ）
+            地図を管理者モードで開く
           </a>
           <button
             onClick={() => {

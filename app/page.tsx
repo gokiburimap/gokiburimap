@@ -274,7 +274,7 @@ export default function Home() {
     zIndex: 1000,
     pointerEvents: "none",
   }}>
-    建物をタップしてください
+    目撃した場所をタップしてください
   </div>
 )}
 

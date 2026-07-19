@@ -86,6 +86,30 @@ export async function GET(req: NextRequest) {
         { status: 200 }
       );
     }
+    // ============================================================
+    // ★2026-07-19 追加：投稿禁止エリアの判定もタップ時点で行う
+    // 従来は投稿ボタンを押した後(APIの検問6)で初めて弾かれていたが、
+    // 太平洋・海外と同じく、タップした瞬間に弾く方が体験がよいため。
+    // ※APIの検問6は削除しない（フォーム表示中にエリア登録された場合や、
+    //   APIを直接叩く投稿への最終防衛線として二重に残す）
+    // 判定に失敗した場合は通す（投稿API側の検問6が最後に守るので安全）
+    // ============================================================
+    try {
+      const { getServiceClient } = await import("../../lib/supabase-server");
+      const supabase = getServiceClient();
+      const { data: isExcluded } = await supabase.rpc("is_in_excluded_area", {
+        p_lat: Number(lat),
+        p_lng: Number(lon),
+      });
+      if (isExcluded === true) {
+        return NextResponse.json(
+          { error: "excluded area", outOfService: true },
+          { status: 200 }
+        );
+      }
+    } catch (e) {
+      console.error("禁止エリア判定に失敗（タップは通します）:", e);
+    }
 
     return NextResponse.json({
       prefecture,
