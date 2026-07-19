@@ -26,6 +26,7 @@ interface Report {
   address?: string;
   occurred_on?: string; // "2026-07-18" 形式
   detail?: string;
+  delete_token?: string; // ★確認ピンの取り消しボタン用。メモリ上だけの値
 }
 
 interface AppleMapProps {
@@ -57,6 +58,19 @@ interface AppleMapProps {
   // ============================================================
   justPosted?: Report | null;
   onDismissJustPosted?: () => void;
+  // ============================================================
+  // 🗑 確認ピンから投稿を取り消したときの通知（2026-07-18 追加）
+  // 親(page.tsx)側で、確認ピンを消す＋地図を再読込（霧を消す）するのに使う。
+  // ============================================================
+  onJustPostedDeleted?: () => void;
+  // ============================================================
+  // 🔑 管理者モード（2026-07-19 追加）
+  // 合言葉が渡されると、霧に加えて投稿1件ずつの📍ピンを表示する。
+  // ピンをタップすると投稿内容（運営箱の住所・詳細込み）と削除ボタンが出る。
+  // 座標や住所・詳細を返すAPIはサーバー側で合言葉を検証するため、
+  // URLに?adminを付けただけの一般人には何も見えない。
+  // ============================================================
+  adminKey?: string | null;
   // ============================================================
   // 🚫 投稿できない場所をタップしたときの通知（2026-07-18 追加）
   //
@@ -678,7 +692,11 @@ function applyAnnotationInteractivity(
 // 投稿フォームがメモリに持っている内容をそのまま表示しているだけなので、
 // 他人には見えないし、ページを更新すれば消える。
 // ============================================================
-function buildJustPostedCallout(report: Report, onDismiss?: () => void) {
+function buildJustPostedCallout(
+  report: Report,
+  onDismiss?: () => void,
+  onDeleted?: () => void
+) {
   const container = document.createElement("div");
   container.style.cssText =
     "background:#FFFFFF;border-radius:12px;padding:14px 16px;box-shadow:0 4px 16px rgba(0,0,0,0.18);min-width:220px;max-width:280px;text-align:left;";
@@ -718,23 +736,58 @@ function buildJustPostedCallout(report: Report, onDismiss?: () => void) {
   });
 
   // ============================================================
-  // 【削除ボタンを付けるときはここ】
+  // 🗑「この投稿を取り消す」ボタン（2026-07-18 実装）
   //
-  // 現状は未実装。理由は、ブラウザから直接DBを削除する方式にすると、
-  // anon key を使って誰でも全件削除できてしまうため。
-  // 「本人だけが消せる」を成立させるには、投稿時にサーバーが発行した
-  // delete_token を照合する仕組み(APIルート)が必要になる。
+  // 投稿時にAPIが発行した削除トークン(delete_token)を添えて
+  // DELETE /api/reports/[id] を呼ぶ。トークンは誰も読み出せない
+  // report_details側に保存されているため、本人（＝いまこの画面を
+  // 見ている人）以外は照合できず、他人の投稿は消せない。
   //
-  // 実装後は、ここに「この投稿を取り消す」ボタンを追加し、
-  //   fetch(`/api/reports/${report.id}`, {
-  //     method: "DELETE",
-  //     headers: { "x-delete-token": token },
-  //   })
-  // を呼ぶ形にする。
+  // ★誤タップ防止のため2段階式★
+  // 1回目のクリックで文言が「もう一度押すと取り消します」に変わり、
+  // 2回目のクリックで実際に削除する。ネイティブのconfirm()は
+  // 見た目がエラー警告風なので使わない（outOfService警告と同じ方針）。
   // ============================================================
+  if (report.delete_token && report.id) {
+    const deleteBtn = document.createElement("button");
+    deleteBtn.textContent = "この投稿を取り消す";
+    deleteBtn.style.cssText =
+      "margin-top:10px;width:100%;background:transparent;color:#B3261E;border:1.5px solid #B3261E;padding:7px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;";
+
+    let armed = false; // 2段階確認の状態
+    deleteBtn.onclick = async () => {
+      if (!armed) {
+        armed = true;
+        deleteBtn.textContent = "本当に取り消す";
+        deleteBtn.style.background = "#B3261E";
+        deleteBtn.style.color = "#FFFFFF";
+        return;
+      }
+
+      deleteBtn.disabled = true;
+      deleteBtn.textContent = "取り消し中...";
+      try {
+        const res = await fetch(`/api/reports/${report.id}`, {
+          method: "DELETE",
+          headers: { "x-delete-token": report.delete_token! },
+        });
+        if (!res.ok) {
+          deleteBtn.disabled = false;
+          deleteBtn.textContent = "取り消しに失敗しました。もう一度押してください";
+          return;
+        }
+        // 成功：親に通知（確認ピンを消す＋地図を再読込して霧を消す）
+        if (onDeleted) onDeleted();
+      } catch {
+        deleteBtn.disabled = false;
+        deleteBtn.textContent = "通信に失敗しました。もう一度押してください";
+      }
+    };
+    container.appendChild(deleteBtn);
+  }
 
   const closeBtn = document.createElement("button");
-  closeBtn.textContent = "閉じる";
+  closeBtn.textContent = "完了";
   closeBtn.style.cssText =
     "margin-top:10px;width:100%;background:transparent;color:#662510;border:1.5px solid #662510;padding:7px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;";
   closeBtn.onclick = () => {
@@ -933,6 +986,8 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     refreshTrigger,
     justPosted = null,
     onDismissJustPosted,
+    onJustPostedDeleted,
+    adminKey = null,
     onOutOfService,
   },
   ref
@@ -993,6 +1048,165 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   const onStartInputRef = useRef(onStartInput);
   const onCancelRef = useRef(onCancel);
   const onDismissJustPostedRef = useRef(onDismissJustPosted);
+  const onJustPostedDeletedRef = useRef(onJustPostedDeleted);
+
+  // ============================================================
+  // 🔑 管理者モード：投稿ピンの表示と削除（2026-07-19 追加）
+  //
+  // 「霧の中のどの投稿を消せばいいか分からない」問題への回答。
+  // 管理者だけ、投稿1件ずつの📍ピンが霧の上に表示され、タップすると
+  // 投稿内容と削除ボタンが出る。地図上で直接サクサク消せる。
+  //
+  // ・ピンはズームがある程度深いときだけ表示（浅いと数が多すぎるため）
+  // ・データは /api/admin/reports のbboxモードから取得。サーバーが
+  //   x-admin-keyを検証するので、合言葉なしでは1件も取れない
+  // ・削除するとfetchReports()を呼び直し、霧（nearby_count）も更新される
+  // ============================================================
+  const adminKeyRef = useRef<string | null | undefined>(adminKey);
+  const adminPinsRef = useRef<any[]>([]);
+  const renderAdminPinsRef = useRef<(map: any) => void>(() => {});
+
+  const clearAdminPins = (map: any) => {
+    adminPinsRef.current.forEach((a) => map.removeAnnotation(a));
+    adminPinsRef.current = [];
+  };
+
+  // 管理者ピンの吹き出し（投稿内容＋2段階削除ボタン）
+  const buildAdminPinCallout = (r: any, map: any, ann: any) => {
+    const box = document.createElement("div");
+    box.style.cssText =
+      "background:#FFFFFF;border-radius:12px;padding:12px 14px;box-shadow:0 4px 16px rgba(0,0,0,0.18);min-width:210px;max-width:270px;text-align:left;";
+
+    const title = document.createElement("p");
+    title.textContent = `投稿 #${r.id}（管理者のみ表示）`;
+    title.style.cssText = "margin:0 0 8px;font-size:13px;font-weight:700;color:#662510;";
+    box.appendChild(title);
+
+    // ※ユーザー入力(住所・詳細)を扱うため、innerHTMLではなくtextContentで
+    //   組み立てる（スクリプト混入＝XSS対策）
+    const rows: [string, string][] = [
+      ["投稿日時", new Date(r.created_at).toLocaleString("ja-JP")],
+      ["目撃日", r.occurred_on ?? "-"],
+      ["住所", r.report_details?.address ?? "-"],
+      ["詳細", r.report_details?.detail ?? "-"],
+      ["近隣件数", String(r.nearby_count ?? "-")],
+    ];
+    rows.forEach(([label, value]) => {
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;gap:8px;margin-bottom:4px;font-size:12px;line-height:1.6;";
+      const l = document.createElement("span");
+      l.textContent = label;
+      l.style.cssText = "color:#78716C;flex-shrink:0;min-width:56px;";
+      const v = document.createElement("span");
+      v.textContent = value;
+      v.style.cssText = "color:#292524;word-break:break-all;";
+      row.appendChild(l);
+      row.appendChild(v);
+      box.appendChild(row);
+    });
+
+    const delBtn = document.createElement("button");
+    delBtn.textContent = "この投稿を削除";
+    delBtn.style.cssText =
+      "margin-top:8px;width:100%;background:transparent;color:#B3261E;border:1.5px solid #B3261E;padding:7px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;";
+    let armed = false;
+    delBtn.onclick = async () => {
+      if (!armed) {
+        armed = true;
+        delBtn.textContent = "本当に削除";
+        delBtn.style.background = "#B3261E";
+        delBtn.style.color = "#FFFFFF";
+        return;
+      }
+      delBtn.disabled = true;
+      delBtn.textContent = "削除中...";
+      try {
+        const res = await fetch("/api/admin/reports", {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+            "x-admin-key": adminKeyRef.current ?? "",
+          },
+          body: JSON.stringify({ id: r.id }),
+        });
+        if (!res.ok) {
+          delBtn.disabled = false;
+          delBtn.textContent = "失敗しました。もう一度押してください";
+          return;
+        }
+        map.removeAnnotation(ann);
+        adminPinsRef.current = adminPinsRef.current.filter((a) => a !== ann);
+        // 霧（nearby_count）を最新に描き直す
+        fetchReports();
+      } catch {
+        delBtn.disabled = false;
+        delBtn.textContent = "通信失敗。もう一度押してください";
+      }
+    };
+    box.appendChild(delBtn);
+    return box;
+  };
+
+  const renderAdminPins = async (map: any) => {
+    const key = adminKeyRef.current;
+    if (!key || !map) return;
+
+    const span = map.region.span;
+    const center = map.region.center;
+
+    // ズームが浅い（広域表示）ときはピンを出さない。
+    // 0.08度 ≒ 約9km四方。これより広いと件数が多すぎて重くなるため。
+    if (span.latitudeDelta > 0.08) {
+      clearAdminPins(map);
+      return;
+    }
+
+    const qs =
+      `latMin=${center.latitude - span.latitudeDelta / 2}` +
+      `&latMax=${center.latitude + span.latitudeDelta / 2}` +
+      `&lngMin=${center.longitude - span.longitudeDelta / 2}` +
+      `&lngMax=${center.longitude + span.longitudeDelta / 2}`;
+
+    try {
+      const res = await fetch(`/api/admin/reports?${qs}`, {
+        headers: { "x-admin-key": key },
+      });
+      if (!res.ok) return; // 合言葉が無効なら何も表示しない（サーバーが門番）
+      const json = await res.json();
+
+      clearAdminPins(map);
+      (json.reports ?? []).forEach((r: any) => {
+        const ann = new window.mapkit.Annotation(
+          new window.mapkit.Coordinate(r.lat, r.lng),
+          () => {
+            const div = document.createElement("div");
+            div.style.display = "inline-block";
+            div.style.lineHeight = "1";
+            div.style.fontSize = "24px";
+            div.style.cursor = "pointer";
+            div.style.filter = "drop-shadow(0 1px 2px rgba(0,0,0,0.4))";
+            div.textContent = "📍";
+            return div;
+          },
+          { calloutEnabled: true, calloutOffset: new DOMPoint(0, 6) }
+        );
+        ann.callout = {
+          calloutElementForAnnotation: () => buildAdminPinCallout(r, map, ann),
+        };
+        map.addAnnotation(ann);
+        adminPinsRef.current.push(ann);
+      });
+    } catch {
+      /* 通信失敗時は何もしない（次のパン・ズームで再試行される） */
+    }
+  };
+  renderAdminPinsRef.current = renderAdminPins;
+
+  useEffect(() => {
+    adminKeyRef.current = adminKey;
+    if (mapRef.current) renderAdminPinsRef.current(mapRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminKey]);
   const onOutOfServiceRef = useRef(onOutOfService);
 
   // ============================================================
@@ -1036,8 +1250,9 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     onStartInputRef.current = onStartInput;
     onCancelRef.current = onCancel;
     onDismissJustPostedRef.current = onDismissJustPosted;
+    onJustPostedDeletedRef.current = onJustPostedDeleted;
     onOutOfServiceRef.current = onOutOfService;
-  }, [onStartInput, onCancel, onDismissJustPosted, onOutOfService]);
+  }, [onStartInput, onCancel, onDismissJustPosted, onJustPostedDeleted, onOutOfService]);
 
   useImperativeHandle(ref, () => ({
     isZoomedInEnough: () => {
@@ -1138,10 +1353,12 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       map.addEventListener("region-change-end", () => {
         renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
         applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
+        renderAdminPinsRef.current(map); // 管理者モード時のみ実際に描画される
       });
 
       renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
       applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
+      renderAdminPinsRef.current(map);
 
       map.addEventListener("single-tap", async (event: any) => {
         if (!isSelectingRef.current && !reportPosRef.current) return;
@@ -1288,9 +1505,15 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
     annotation.callout = {
       calloutElementForAnnotation: () =>
-        buildJustPostedCallout(justPosted, () => {
-          if (onDismissJustPostedRef.current) onDismissJustPostedRef.current();
-        }),
+        buildJustPostedCallout(
+          justPosted,
+          () => {
+            if (onDismissJustPostedRef.current) onDismissJustPostedRef.current();
+          },
+          () => {
+            if (onJustPostedDeletedRef.current) onJustPostedDeletedRef.current();
+          }
+        ),
     };
 
     currentMap.addAnnotation(annotation);

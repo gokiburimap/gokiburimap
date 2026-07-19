@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { supabase } from "../lib/supabase";
+// ★2026-07-18：supabaseの直接importを廃止。投稿は /api/reports 経由に一本化した
+// （ブラウザからの直接INSERTはRLSで全面禁止済み）
 
 // ============================================================
 // 🪳 投稿直後の確認ピン用の型（2026-07-18 追加）
@@ -21,6 +22,7 @@ interface Report {
   address?: string;
   occurred_on?: string; // "2026-07-18" 形式
   detail?: string;
+  delete_token?: string; // ★確認ピンの取り消しボタン用。メモリ上だけの値
 }
 
 interface ReportSidebarProps {
@@ -77,68 +79,66 @@ export default function ReportSidebar({ lat, lng, prefecture, city, address, onC
     setLoading(true);
 
     // ============================================================
-    // ① 公開する箱（reports）に書き込む
+    // 投稿は /api/reports（APIルート）経由に一本化（2026-07-18）
     //
-    // 地図に霧を描くのに必要なものだけ。住所はここには入れない。
-    // ★.select().single() で、書き込んだ行(idを含む)を受け取る。
-    //   ②のreport_idと、投稿直後の確認ピンに使う。
-    // ============================================================
-    const { data, error } = await supabase
-      .from("reports")
-      .insert({
-        lat,
-        lng,
-        occurred_on: occurredOn,
-      })
-      .select()
-      .single();
-
-    if (error || !data) {
-      alert("投稿に失敗しました: " + (error?.message ?? "不明なエラー"));
-      setLoading(false);
-      return;
-    }
-
-    // ============================================================
-    // ② 運営だけの箱（report_details）に、住所と自由記述を書き込む
+    // サーバー側で以下がまとめて行われる：
+    //   ・レート制限（同一IPからの連続投稿チェック）
+    //   ・reports（座標・日付）と report_details（住所・詳細）への書き分け
+    //   ・投稿者情報（IP/UA/時刻）の記録（発信者情報開示請求への備え）
+    //   ・削除トークンの発行（本人だけが取り消せる）
     //
-    // ★このテーブルはRLSでSELECTポリシーを作っていないため、
-    //   誰も読み出せない（curl・anon key不可）。運営はSupabaseの
-    //   管理画面から確認する。
-    //
-    // ★住所も詳細も、地図表示には使わない。だから公開箱ではなく
-    //   こちらに隔離している。
-    //
-    // ★ここが失敗しても、投稿そのもの(①)は成功扱いにする。
-    //   本人には霧が立っているのに「失敗しました」と出るほうが
-    //   混乱するため。失敗はコンソールに残すだけにしておく。
-    //
-    // ※将来 /api/reports (APIルート)を作ったら、①②をまとめてサーバー側で
-    //   処理する形に置き換える。IPアドレスの記録・削除トークンの発行も
-    //   そのタイミングで一緒に入る。
+    // ブラウザからSupabaseへの直接INSERTはRLSで全面禁止済みのため、
+    // この経路以外で投稿することはできない。
     // ============================================================
     const fullAddress = `${prefectureVal}${cityVal}${addressVal}`;
-    const { error: detailError } = await supabase.from("report_details").insert({
-      report_id: data.id,
-      address: fullAddress,
-      detail: detail.trim() || null,
-    });
-    if (detailError) {
-      console.error("住所・詳細の保存に失敗しました:", detailError);
-    }
 
-    // ============================================================
-    // ③ 投稿直後の確認ピン用に、内容を親(page.tsx)へ渡す
-    //
-    // ★address・detail はDBから読み直さず、いまフォームが持っている値を
-    //   そのまま渡している。だから他人には絶対に見えないし、
-    //   ページを更新すれば消える。
-    // ============================================================
-    onSubmitDone({
-      ...data,
-      address: fullAddress,
-      detail: detail.trim(),
-    });
+    try {
+      const res = await fetch("/api/reports", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lat,
+          lng,
+          occurred_on: occurredOn,
+          address: fullAddress,
+          detail: detail.trim(),
+        }),
+      });
+
+      const json = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        // ★429 ＝ レート制限。文言を変えたいときはここ
+        if (res.status === 429) {
+          alert("投稿は一定時間に1件までです。時間をおいてもう一度お試しください。");
+        } else if (res.status === 403 && json?.error === "excluded_area") {
+          // ★403 ＝ 投稿禁止エリア。文言を変えたいときはここ
+          alert("この場所への投稿は受け付けていません。");
+        } else {
+          alert("投稿に失敗しました: " + (json?.error ?? "不明なエラー"));
+        }
+        setLoading(false);
+        return;
+      }
+
+      // ============================================================
+      // 投稿直後の確認ピン用に、内容を親(page.tsx)へ渡す
+      //
+      // ★address・detail はDBから読み直さず、いまフォームが持っている値を
+      //   そのまま渡している。だから他人には絶対に見えないし、
+      //   ページを更新すれば消える。
+      // ★delete_token は確認ピンの「この投稿を取り消す」ボタンで使う。
+      //   これもメモリ上だけの値で、ページを離れれば消える。
+      // ============================================================
+      onSubmitDone({
+        ...json.report,
+        address: fullAddress,
+        detail: detail.trim(),
+        delete_token: json.deleteToken,
+      });
+    } catch {
+      alert("通信に失敗しました。時間をおいてもう一度お試しください。");
+    }
 
     setLoading(false);
   };

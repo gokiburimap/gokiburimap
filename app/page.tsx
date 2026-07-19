@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Map from "./components/Map";
 import ReportSidebar from "./components/ReportSidebar";
 
@@ -34,6 +34,7 @@ interface Report {
   address?: string;
   occurred_on?: string; // "2026-07-18" 形式
   detail?: string;
+  delete_token?: string; // ★確認ピンの取り消しボタン用。メモリ上だけの値
 }
 
 interface MapHandle {
@@ -53,6 +54,21 @@ export default function Home() {
   // trueになり、画面のどこかを押すと消える。
   // ============================================================
   const [showOutOfServiceWarning, setShowOutOfServiceWarning] = useState(false);
+
+  // ============================================================
+  // 🔑 管理者モード（2026-07-19 追加）
+  // URLに ?admin を付けてアクセスし、かつ管理画面(/admin)でログイン済み
+  // （localStorageに合言葉がある）の場合だけ、地図に投稿ピンが出る。
+  // 合言葉はサーバー側で検証されるので、?adminを付けただけの一般人には
+  // 何も表示されない（ピン用のデータが1件も返らない）。
+  // ============================================================
+  const [adminKey, setAdminKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).has("admin")) {
+      const key = localStorage.getItem("adminKey");
+      if (key) setAdminKey(key);
+    }
+  }, []);
 
   // ============================================================
   // 🪳 投稿直後の確認ピン（2026-07-18 追加）
@@ -143,8 +159,40 @@ export default function Home() {
           refreshTrigger={refreshTrigger}
           justPosted={justPosted}
           onDismissJustPosted={() => setJustPosted(null)}
+          onJustPostedDeleted={() => {
+            // 取り消し成功：確認ピンを消し、地図を再読込して霧も消す
+            // （DB側はトリガーが周辺のnearby_countを自動で減らしている）
+            setJustPosted(null);
+            setRefreshTrigger(n => n + 1);
+          }}
           onOutOfService={() => setShowOutOfServiceWarning(true)}
+          adminKey={adminKey}
         />
+
+        {/* 🔑 管理者モードのバッジ（押すと管理画面に戻れる） */}
+        {adminKey && (
+          <a
+            href="/admin"
+            style={{
+              position: "absolute",
+              top: 70,
+              left: "50%",
+              transform: "translateX(-50%)",
+              background: "#662510",
+              color: "#fff",
+              padding: "6px 16px",
+              borderRadius: 20,
+              fontSize: 12,
+              fontWeight: 600,
+              zIndex: 1000,
+              boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
+              textDecoration: "none",
+              whiteSpace: "nowrap",
+            }}
+          >
+            管理者モード：ズームすると📍が出ます（ここを押すと管理画面へ）
+          </a>
+        )}
         
         {showZoomWarning && (
           <div
@@ -226,7 +274,7 @@ export default function Home() {
     zIndex: 1000,
     pointerEvents: "none",
   }}>
-    目撃した場所をタップしてください
+    建物をタップしてください
   </div>
 )}
 
