@@ -143,14 +143,23 @@ export default function ReportSidebar({ lat, lng, prefecture, city, address, onC
     setLoading(false);
   };
 
+  // ★2026-07-19 スマホ対応：余白を詰めてフォーム全体をコンパクトに
+  // （開いた瞬間に「キャンセル」「投稿する」まで見えるようにする）
   const inputStyle = {
     width: "100%",
-    padding: "12px",
-    marginBottom: "20px",
+    padding: "10px",
+    marginBottom: "14px",
     border: "1px solid #ccc",
     borderRadius: "8px",
     fontSize: "14px",
     boxSizing: "border-box" as const,
+  };
+
+  // 短くてよい入力欄（都道府県・市区町村・日付）用の幅
+  // ★【幅を変えたいときはこの12emを変える】★
+  const narrowStyle = {
+    ...inputStyle,
+    width: "12em",
   };
 
   const labelStyle = {
@@ -162,8 +171,8 @@ export default function ReportSidebar({ lat, lng, prefecture, city, address, onC
 
   const hintStyle = {
     display: "block",
-    marginTop: "-14px",
-    marginBottom: "20px",
+    marginTop: "-8px",
+    marginBottom: "14px",
     fontSize: "11px",
     color: "#78716C",
     lineHeight: 1.6,
@@ -191,16 +200,16 @@ export default function ReportSidebar({ lat, lng, prefecture, city, address, onC
         overflowY: "auto",
         boxShadow: "2px 0 12px rgba(0,0,0,0.2)",
       }} onClick={e => e.stopPropagation()}>
-        <h2 style={{ marginTop: 0, marginBottom: "24px" }}>
-          🪳 目撃情報を入力
-        </h2>
+        {/* ★2026-07-19：見出し「🪳 目撃情報を入力」は削除した。
+            ボタンを押した直後に開く画面なので自明であり、
+            縦のスペースを詰めて「投稿する」まで一目で見せる方を優先 */}
 
         <label style={labelStyle}>都道府県</label>
         <input
           value={prefectureVal}
           onChange={e => setPrefectureVal(e.target.value)}
           placeholder="東京都"
-          style={inputStyle}
+          style={narrowStyle}
         />
 
         <label style={labelStyle}>市区町村</label>
@@ -208,7 +217,7 @@ export default function ReportSidebar({ lat, lng, prefecture, city, address, onC
           value={cityVal}
           onChange={e => setCityVal(e.target.value)}
           placeholder="渋谷区"
-          style={inputStyle}
+          style={narrowStyle}
         />
 
         <label style={labelStyle}>住所（丁目・番地）</label>
@@ -228,7 +237,7 @@ export default function ReportSidebar({ lat, lng, prefecture, city, address, onC
           value={occurredOn}
           onChange={e => setOccurredOn(e.target.value)}
           max={todayString()}
-          style={inputStyle}
+          style={narrowStyle}
         />
 
         <label style={labelStyle}>詳細（任意）</label>

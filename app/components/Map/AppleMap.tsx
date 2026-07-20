@@ -704,7 +704,9 @@ function applyAnnotationInteractivity(
   const disableTap = isSelectingRef.current || !!reportPosRef.current;
   markersRef.current.forEach((ann) => {
     if (ann) {
-      ann.enabled = !disableTap;
+      // ★2026-07-19：復帰時は一律trueではなく、本来の値(__baseEnabled)に戻す。
+      // 霧は常にfalse（タップ素通し）、円はtrue（タップで展開ズーム）。
+      ann.enabled = disableTap ? false : (ann.__baseEnabled ?? true);
     }
   });
 }
@@ -982,7 +984,24 @@ function renderMarkers(
       anchorOffset: new DOMPoint(0, -displaySize / 2),
     });
 
-    if (isCluster) {
+    // ============================================================
+    // ★2026-07-19 スマホ操作バグの根本修正：霧はタップ対象にしない
+    //
+    // ズームインすると霧は画面の大部分を覆う巨大な画像になるが、
+    // タップに反応する設定のままだったため、
+    //   ・指でなぞる → 霧が「タップされた」と誤解 → 勝手に展開ズーム
+    //   ・ピンチ → 霧が指を吸収し、地図までジェスチャーが届かない
+    // という誤動作が起きていた（「霧に触れるとバグる」symptomatic）。
+    //
+    // 霧(isCloudZoom)は enabled=false でタッチを地図に素通しさせる。
+    // 円(🪳＋数字)は従来通りタップで展開ズームできる。
+    // __baseEnabled は applyAnnotationInteractivity が投稿位置選択中の
+    // 一時無効化から復帰するときの「本来の値」として参照する。
+    // ============================================================
+    (annotation as any).__baseEnabled = !isCloudZoom;
+    annotation.enabled = !isCloudZoom;
+
+    if (isCluster && !isCloudZoom) {
       annotation.addEventListener("select", () => {
         const expansionZoom = Math.min(
           clusterIndexRef.current!.getClusterExpansionZoom(c.properties.cluster_id),
@@ -1045,7 +1064,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   // font=文字サイズ / swatch=色見本の四角の大きさ / pad=箱の内側余白
   // ============================================================
   const LEGEND_PC = { top: 72, right: 16, font: 14, swatch: 18, pad: "12px 16px", line: 1.9 };
-  const LEGEND_SP = { bottom: 36, left: 10, font: 12, swatch: 14, pad: "8px 12px", line: 1.8 };
+  const LEGEND_SP = { bottom: 36, left: 10, font: 13, swatch: 16, pad: "10px 14px", line: 1.8 };
   const [legendCollapsed, setLegendCollapsed] = useState(false);
 
   const isSelectingRef = useRef(isSelecting);
@@ -1374,7 +1393,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       //   下げるのではなく、こちらを上げること。
       // ============================================================
       const MIN_CAMERA_DISTANCE_METERS_PC = 200;
-      const MIN_CAMERA_DISTANCE_METERS_SP = 120; // スマホ用。小さいほど深く寄れる
+      const MIN_CAMERA_DISTANCE_METERS_SP = 80; // スマホ用。小さいほど深く寄れる
       const isMobileInit = typeof window !== "undefined" && window.innerWidth < 768;
       map.cameraZoomRange = new window.mapkit.CameraZoomRange(
         isMobileInit ? MIN_CAMERA_DISTANCE_METERS_SP : MIN_CAMERA_DISTANCE_METERS_PC

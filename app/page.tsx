@@ -146,11 +146,36 @@ export default function Home() {
     <main style={{ width: "100vw", height: "100dvh", display: "flex", flexDirection: "column" }}>
       <header style={{
         background: "white",
-        padding: "16px 24px",
+        padding: "12px 16px",
         borderBottom: "1px solid #eee",
         flexShrink: 0,
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
       }}>
-        <h1 style={{ margin: 0, fontSize: "20px", fontWeight: "bold", color: "#111" }}>
+        {/* ============================================================
+            ★2026-07-19：デザイン確認用のダミー配置★
+            ☰＝ハンバーガーメニュー（まだ押しても何も起きない）
+            🪳アイコン＝roach-icon.png（高さはheightの数値で調整）
+            本実装（メニューの中身）は別途。不要になったら☰やimgの
+            ブロックを消すだけでよい。
+           ============================================================ */}
+        <button
+          aria-label="メニュー（準備中）"
+          style={{
+            border: "none",
+            background: "transparent",
+            fontSize: "22px",
+            color: "#662510",
+            cursor: "pointer",
+            padding: "0 4px",
+            lineHeight: 1,
+          }}
+        >
+          ☰
+        </button>
+        <img src="/roach-icon.png" alt="" style={{ height: "22px", width: "auto" }} />
+        <h1 style={{ margin: 0, fontSize: "20px", fontWeight: "bold", color: "#292524" }}>
           ゴキブリマップ
         </h1>
       </header>
@@ -220,7 +245,8 @@ export default function Home() {
                 borderRadius: "12px",
                 boxShadow: "0 4px 16px rgba(0,0,0,0.2)",
                 fontSize: "14px",
-                color: "#111",
+                color: "#292524", // ★2026-07-19：薄い#111→メイン文字色に統一
+                fontWeight: 600,
                 textAlign: "center",
                 whiteSpace: "nowrap",
               }}
@@ -255,7 +281,8 @@ export default function Home() {
                 borderRadius: "12px",
                 boxShadow: "0 4px 16px rgba(0,0,0,0.2)",
                 fontSize: "14px",
-                color: "#111",
+                color: "#292524", // ★ズーム警告と同じ濃さに統一
+                fontWeight: 600,
                 textAlign: "center",
                 whiteSpace: "nowrap",
               }}
@@ -267,7 +294,10 @@ export default function Home() {
         {step === "selecting" && (
   <div style={{
     position: "absolute",
-    bottom: "120px",
+    // ★2026-07-19：下(bottom:120px)から上へ移動。凡例(左下)との被り回避＋
+    //   タップの邪魔にならない位置として、住所検索バーの下に配置。
+    //   ★【位置を微調整したいときはこのtopの数値を変える】★
+    top: "64px",
     left: "50%",
     transform: "translateX(-50%)",
     background: "rgba(255,255,255,0.95)",
@@ -279,7 +309,7 @@ export default function Home() {
     boxShadow: "0 2px 10px rgba(0,0,0,0.15)",
     zIndex: 1000,
     pointerEvents: "none",
-    whiteSpace: "nowrap", // ★2026-07-19：白箱が文字幅に追従し、必ず1行で表示される
+    whiteSpace: "nowrap", // 白箱が文字幅に追従し、必ず1行で表示される
   }}>
     目撃した場所をタップしてください
   </div>
