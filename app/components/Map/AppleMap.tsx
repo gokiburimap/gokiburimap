@@ -467,13 +467,31 @@ function createCloudIconUrl(count: number, colorCount: number, size: number, see
     });
   }
 
-  ctx.filter = `blur(${Math.round(size * 0.15)}px)`;
-  ctx.fillStyle = `rgba(${colorRgb}, ${baseOpacity})`;
+  // ============================================================
+  // ★2026-07-19 iPhone対応：霧のぼかし方式を変更
+  //
+  // 従来の ctx.filter = "blur(...)" は、iPhoneのSafariでは効かない環境が
+  // あり、輪郭がぼけずに「ベタ塗り」に見えていた（PCでは霧に見えるのに
+  // スマホだとベタ塗り、の原因はこれ）。
+  //
+  // 代わりに、どのブラウザでも確実に使える shadowBlur（影のぼかし）で描く。
+  // 【仕組み】図形の本体をCanvasの遥か左外側に描き、その「影」だけを
+  // Canvas内に落とす。影は輪郭がふんわりぼけるので、霧の見た目になる。
+  // PCも同じ方式に統一したので、PC/スマホで見た目が揃う。
+  // 【ぼかしの強さを変えたいときは ctx.shadowBlur の係数(0.15)を変える】
+  // ============================================================
+  const SHADOW_SHIFT = canvasSize * 2; // 本体をこれだけ左に追い出す
+
+  ctx.save();
+  ctx.shadowColor = `rgba(${colorRgb}, ${baseOpacity})`;
+  ctx.shadowBlur = Math.round(size * 0.15);
+  ctx.shadowOffsetX = SHADOW_SHIFT; // 影だけをCanvas内に戻す
+  ctx.fillStyle = "rgba(0, 0, 0, 1)"; // 本体の色は何でもよい（描画されるのは影の色）
 
   // 頂点同士を、直線ではなく曲線(quadraticCurveTo)でつないで滑らかな不定形にする
   ctx.beginPath();
   ctx.moveTo(
-    (points[0].x + points[pointCount - 1].x) / 2,
+    (points[0].x + points[pointCount - 1].x) / 2 - SHADOW_SHIFT,
     (points[0].y + points[pointCount - 1].y) / 2
   );
   for (let i = 0; i < pointCount; i++) {
@@ -481,10 +499,11 @@ function createCloudIconUrl(count: number, colorCount: number, size: number, see
     const next = points[(i + 1) % pointCount];
     const midX = (current.x + next.x) / 2;
     const midY = (current.y + next.y) / 2;
-    ctx.quadraticCurveTo(current.x, current.y, midX, midY);
+    ctx.quadraticCurveTo(current.x - SHADOW_SHIFT, current.y, midX - SHADOW_SHIFT, midY);
   }
   ctx.closePath();
   ctx.fill();
+  ctx.restore();
 
   return canvas.toDataURL();
 }
@@ -1001,45 +1020,13 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   const [reports, setReports] = useState<Report[]>([]);
 
   // ============================================================
-  // 🎨 色分け凡例：ドラッグ移動・折りたたみ用の状態（2026-07-17 追加）
-  // legendPos が null のうちは初期位置(CSSのtop/right指定)、
-  // 一度ドラッグされたらtop/leftの絶対位置に切り替えて追従させる。
+  // 🎨 目撃件数の凡例（2026-07-19 スマホ対応で簡素化）
+  // ドラッグ移動は廃止し、位置固定にした。
+  // ★【凡例の位置を微調整したいときは、下の2つの数値を変える】★
   // ============================================================
-  const legendRef = useRef<HTMLDivElement>(null);
-  const [legendPos, setLegendPos] = useState<{ top: number; left: number } | null>(null);
+  const LEGEND_TOP = 72; // 画面上からの距離(px)。検索バーと被るなら大きくする
+  const LEGEND_RIGHT = 10; // 画面右からの距離(px)
   const [legendCollapsed, setLegendCollapsed] = useState(false);
-  const legendDragStateRef = useRef<{ startX: number; startY: number; origTop: number; origLeft: number } | null>(null);
-
-  const handleLegendDragStart = (e: React.PointerEvent) => {
-    const el = legendRef.current;
-    const containerEl = mapContainerRef.current;
-    if (!el || !containerEl) return;
-
-    const elRect = el.getBoundingClientRect();
-    const containerRect = containerEl.getBoundingClientRect();
-    const origTop = elRect.top - containerRect.top;
-    const origLeft = elRect.left - containerRect.left;
-
-    legendDragStateRef.current = { startX: e.clientX, startY: e.clientY, origTop, origLeft };
-    setLegendPos({ top: origTop, left: origLeft });
-
-    const onPointerMove = (ev: PointerEvent) => {
-      if (!legendDragStateRef.current) return;
-      const dx = ev.clientX - legendDragStateRef.current.startX;
-      const dy = ev.clientY - legendDragStateRef.current.startY;
-      setLegendPos({
-        top: legendDragStateRef.current.origTop + dy,
-        left: legendDragStateRef.current.origLeft + dx,
-      });
-    };
-    const onPointerUp = () => {
-      legendDragStateRef.current = null;
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
-    };
-    window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", onPointerUp);
-  };
 
   const isSelectingRef = useRef(isSelecting);
   const onMapClickRef = useRef(onMapClick);
@@ -1263,40 +1250,52 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
   const fetchReports = async () => {
     const PAGE_SIZE = 1000;
-    let allReports: any[] = [];
-    let from = 0;
 
-    while (true) {
-      // ============================================================
-      // ★2026-07-18：select("*") から、必要な3カラムだけに絞った
-      //
-      // 【理由1・情報漏れを減らす】
-      //   以前は「全カラム・全件よこせ」だったため、住所などが
-      //   全部ブラウザに届いていた。地図が霧を描くのに必要なのは
-      //   座標だけなので、それ以外は渡さない。
-      //
-      // 【理由2・単純に速い】
-      //   数万件×全カラムの転送が、数万件×3カラムになる。
-      //
-      // 【注意】これはブラウザに渡す量を減らす対策であって、
-      //   anon keyを使った直接アクセス(curl等)は防げない。
-      //   自由記述を report_details に分けているのはそのため。
-      // ============================================================
-      const { data, error } = await supabase
-        .from("reports")
-        .select("id, lat, lng, nearby_count")
-        .order("id", { ascending: true })
-        .range(from, from + PAGE_SIZE - 1);
+    // ============================================================
+    // ★2026-07-19 高速化：ページを「順番に」ではなく「一斉に」取る
+    //
+    // 従来は1000件ずつ順番に取得していたため、3.5万件なら35回の通信が
+    // 数珠つなぎになり、全部届くまでゴキブリが表示されなかった
+    // （初回表示が遅い最大の原因）。
+    // 先に総件数だけ聞き、必要なページ数ぶんのリクエストを同時に投げる
+    // ことで、通信時間が「35往復分」から「ほぼ1往復分」になる。
+    //
+    // 取得カラムを id, lat, lng, nearby_count に絞る方針は従来通り
+    // （地図に不要な情報をブラウザに配らない＋転送量削減）。
+    // ============================================================
+    const { count, error: countError } = await supabase
+      .from("reports")
+      .select("id", { count: "exact", head: true });
 
-      if (error) {
-        console.error("reports取得エラー:", error);
-        break;
-      }
-      if (!data || data.length === 0) break;
-      allReports = allReports.concat(data);
-      if (data.length < PAGE_SIZE) break;
-      from += PAGE_SIZE;
+    if (countError) {
+      console.error("reports件数取得エラー:", countError);
+      return;
     }
+    const total = count ?? 0;
+    if (total === 0) {
+      setReports([]);
+      return;
+    }
+
+    const pageCount = Math.ceil(total / PAGE_SIZE);
+    const results = await Promise.all(
+      Array.from({ length: pageCount }, (_, i) =>
+        supabase
+          .from("reports")
+          .select("id, lat, lng, nearby_count")
+          .order("id", { ascending: true })
+          .range(i * PAGE_SIZE, (i + 1) * PAGE_SIZE - 1)
+      )
+    );
+
+    const allReports: any[] = [];
+    results.forEach((r, i) => {
+      if (r.error) {
+        console.error(`reports取得エラー(ページ${i + 1}):`, r.error);
+      } else if (r.data) {
+        allReports.push(...r.data);
+      }
+    });
     setReports(allReports);
   };
 
@@ -1330,7 +1329,9 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         showsZoomControl: false,
         showsCompass: "hidden",
         isRotationEnabled: false,
-        showsUserLocationControl: true,
+        // ★2026-07-19 スマホ対応：右上の「位置情報」「航空写真」ボタンを非表示に
+        showsUserLocationControl: false,
+        showsMapTypeControl: false,
       });
 
       mapRef.current = map;
@@ -1677,51 +1678,43 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       <SearchBar onSearch={handleSearch} />
 
       {/*
-        🎨 色分け凡例（試行錯誤・動作確認用の暫定UI）
-        ・初期位置を少し下げた(top:16→top:72)
-        ・ヘッダー部分(⋮⋮アイコン)をドラッグすると自由に移動できる
-        ・折りたたみボタン(▾/▸)で開閉できる
-        閾値・色を詰めたら、デザインを整えてください。
+        🎨 目撃件数の凡例（2026-07-19 スマホ対応でコンパクト化・位置固定）
+        位置の微調整は、コンポーネント上部の LEGEND_TOP / LEGEND_RIGHT で行う。
       */}
       <div
-        ref={legendRef}
         style={{
           position: "absolute",
-          ...(legendPos ? { top: legendPos.top, left: legendPos.left } : { top: 72, right: 16 }),
+          top: LEGEND_TOP,
+          right: LEGEND_RIGHT,
           background: "white",
-          borderRadius: 10,
-          padding: "12px 16px",
+          borderRadius: 8,
+          padding: "6px 10px",
           boxShadow: "0 2px 10px rgba(0,0,0,0.15)",
-          fontSize: 14,
+          fontSize: 11,
           color: "#292524",
           zIndex: 10,
-          lineHeight: 1.9,
+          lineHeight: 1.7,
           userSelect: "none",
         }}
       >
         <div
-          onPointerDown={handleLegendDragStart}
           style={{
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            gap: 16,
-            cursor: "grab",
-            marginBottom: legendCollapsed ? 0 : 6,
+            gap: 8,
+            marginBottom: legendCollapsed ? 0 : 4,
           }}
         >
-          <span style={{ fontSize: 12, color: "#78716C", fontWeight: 700, letterSpacing: 1 }}>
-            ⋮⋮ 目撃件数の色分け
-          </span>
+          <span style={{ fontSize: 11, color: "#78716C", fontWeight: 700 }}>目撃件数</span>
           <button
             type="button"
-            onPointerDown={(e) => e.stopPropagation()}
             onClick={() => setLegendCollapsed((v) => !v)}
             style={{
               border: "none",
               background: "transparent",
               cursor: "pointer",
-              fontSize: 14,
+              fontSize: 12,
               color: "#78716C",
               padding: 0,
               lineHeight: 1,
@@ -1734,12 +1727,12 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
         {!legendCollapsed &&
           COUNT_COLOR_BUCKETS.map((bucket) => (
-            <div key={bucket.label} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div key={bucket.label} style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <span
                 style={{
                   display: "inline-block",
-                  width: 18,
-                  height: 18,
+                  width: 12,
+                  height: 12,
                   borderRadius: 3,
                   background: `rgb(${bucket.rgb})`,
                   border: "1px solid rgba(0,0,0,0.15)",

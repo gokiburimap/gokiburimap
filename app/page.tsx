@@ -137,7 +137,13 @@ export default function Home() {
   };
 
   return (
-    <main style={{ width: "100vw", height: "100vh", display: "flex", flexDirection: "column" }}>
+    /*
+      ★2026-07-19 スマホ対応：height を 100vh → 100dvh に変更
+      iPhoneのSafariでは 100vh がアドレスバーの裏まで含んだ高さになり、
+      画面下のGボタンが見切れて、ページ全体をスライドしないと見えなかった。
+      100dvh（実際に見えている高さ）にすると、常に画面内に収まる。
+    */
+    <main style={{ width: "100vw", height: "100dvh", display: "flex", flexDirection: "column" }}>
       <header style={{
         background: "white",
         padding: "16px 24px",
@@ -175,7 +181,7 @@ export default function Home() {
             href="/admin"
             style={{
               position: "absolute",
-              top: 70,
+              top: 16,
               left: "50%",
               transform: "translateX(-50%)",
               background: "#662510",
@@ -274,7 +280,7 @@ export default function Home() {
     zIndex: 1000,
     pointerEvents: "none",
   }}>
-    目撃した場所をタップしてください
+    建物をタップしてください
   </div>
 )}
 
@@ -287,6 +293,7 @@ export default function Home() {
     }
   `}</style>
 
+  {/* 🪳★【Gボタンの位置はここ】bottom=下から、right=右からの距離(px) */}
   <div
     style={{
       position: "absolute",
