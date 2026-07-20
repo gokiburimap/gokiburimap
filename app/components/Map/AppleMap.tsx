@@ -650,29 +650,38 @@ async function performTapAction(
   lat: number,
   lng: number,
   onMapClickRef: { current: (lat: number, lng: number, geo?: any) => void },
-  onOutOfServiceRef: { current: (() => void) | undefined }
+  onOutOfServiceRef: { current: (() => void) | undefined },
+  onCancelRef: { current: () => void }
 ) {
+  // ============================================================
+  // ★2026-07-19 体感速度の改善：先にピンを立て、住所は裏で取る
+  //
+  // 従来はYahoo逆ジオコーディングの返事を待ってからピンを立てていたため、
+  // スマホ回線だとタップから1秒以上何も起きず、エラーに見えていた。
+  // 現在は、タップした瞬間にまずピンを立て（体感ゼロ秒）、住所が届いたら
+  // 後から差し込む。禁止エリア・海外だと判明した場合は、その時点で
+  // ピンを取り下げて警告を出す。
+  // ============================================================
+  onMapClickRef.current(lat, lng); // ①まずピンを立てる（住所は空のまま）
+
   try {
     const res = await fetch(`/api/reverse-geocode?lat=${lat}&lon=${lng}`);
     const geoData = await res.json();
 
-    // ★投稿できない場所（海外・海など）は、ここで止める。
-    //   ピンも立てないし、フォームにも進ませない。
+    // ②投稿できない場所（海外・海・禁止エリア）だった場合は、
+    //   立てたピンを取り下げて警告を出す
     if (geoData.outOfService) {
+      onCancelRef.current();
       onOutOfServiceRef.current?.();
       return;
     }
 
-    if (geoData.error) {
-      onMapClickRef.current(lat, lng);
-      return;
-    }
+    if (geoData.error) return; // 住所が取れなかっただけなら、ピンはそのまま（手入力できる）
+
+    // ③住所が届いたので、ピンの情報に差し込む
     onMapClickRef.current(lat, lng, geoData);
   } catch {
-    // 通信自体が失敗した場合は、従来通り座標だけで進ませる（弾かない）。
-    // ★ここで弾いてしまうと、通信の瞬断で正常な国内地点まで投稿不可に
-    //   なってしまうため、あえて通す方針にしている。
-    onMapClickRef.current(lat, lng);
+    // 通信失敗時はピンをそのまま残す（住所は手入力できる）
   }
 }
 
@@ -1020,12 +1029,23 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   const [reports, setReports] = useState<Report[]>([]);
 
   // ============================================================
-  // 🎨 目撃件数の凡例（2026-07-19 スマホ対応で簡素化）
-  // ドラッグ移動は廃止し、位置固定にした。
-  // ★【凡例の位置を微調整したいときは、下の2つの数値を変える】★
+  // 📱 スマホ判定（2026-07-19 追加）
+  // 画面幅768px未満をスマホ扱いとし、凡例の位置・サイズや
+  // ズーム上限などをPC/スマホで出し分けるのに使う。
   // ============================================================
-  const LEGEND_TOP = 72; // 画面上からの距離(px)。検索バーと被るなら大きくする
-  const LEGEND_RIGHT = 10; // 画面右からの距離(px)
+  const [isMobile] = useState(
+    () => typeof window !== "undefined" && window.innerWidth < 768
+  );
+
+  // ============================================================
+  // 🎨 目撃件数の凡例（2026-07-19 PC/スマホ出し分け対応）
+  // ★【凡例の位置・サイズを微調整したいときは、下の2つのセットを変える】★
+  //   PC   ：右上に固定（従来の大きさに戻した）
+  //   スマホ：左下（🍎リーガル表示の上）に固定・PCよりやや小さめ
+  // font=文字サイズ / swatch=色見本の四角の大きさ / pad=箱の内側余白
+  // ============================================================
+  const LEGEND_PC = { top: 72, right: 16, font: 14, swatch: 18, pad: "12px 16px", line: 1.9 };
+  const LEGEND_SP = { bottom: 36, left: 10, font: 12, swatch: 14, pad: "8px 12px", line: 1.8 };
   const [legendCollapsed, setLegendCollapsed] = useState(false);
 
   const isSelectingRef = useRef(isSelecting);
@@ -1344,12 +1364,21 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       //   数値を大きくする → ズームできる限界が浅くなる（＝建物を特定しにくい）
       //   数値を小さくする → より深くズームインできる
       //
+      // ★2026-07-19：PC/スマホで別の値を持てるようにした。
+      //   スマホは画面が小さく、同じ制限だと窮屈に感じるため、
+      //   PCより深くズームできるようにしてある。
+      //   ※どこまで深くしても、霧が個別ピンに分解されることはない
+      //     （count===1でも常に霧。最低保証半径120mも維持される）
+      //
       // ★霧が「大きすぎる」と感じたときは、MIN_COVERAGE_RADIUS_METERS を
-      //   下げるのではなく、こちらを上げること。前者を下げると法的リスク
-      //   対策が薄まるが、こちらを上げるのは対策が強まる方向なので一石二鳥。
+      //   下げるのではなく、こちらを上げること。
       // ============================================================
-      const MIN_CAMERA_DISTANCE_METERS = 200;
-      map.cameraZoomRange = new window.mapkit.CameraZoomRange(MIN_CAMERA_DISTANCE_METERS);
+      const MIN_CAMERA_DISTANCE_METERS_PC = 200;
+      const MIN_CAMERA_DISTANCE_METERS_SP = 120; // スマホ用。小さいほど深く寄れる
+      const isMobileInit = typeof window !== "undefined" && window.innerWidth < 768;
+      map.cameraZoomRange = new window.mapkit.CameraZoomRange(
+        isMobileInit ? MIN_CAMERA_DISTANCE_METERS_SP : MIN_CAMERA_DISTANCE_METERS_PC
+      );
 
       map.addEventListener("region-change-end", () => {
         renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
@@ -1368,7 +1397,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         const lat = coordinate.latitude;
         const lng = coordinate.longitude;
 
-        await performTapAction(lat, lng, onMapClickRef, onOutOfServiceRef);
+        await performTapAction(lat, lng, onMapClickRef, onOutOfServiceRef, onCancelRef);
       });
     };
 
@@ -1541,7 +1570,8 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         coordinate,
         () => {
           const div = document.createElement("div");
-          div.style.fontSize = "22px";
+          // ★【位置選択中の🪳の大きさはここ】(2026-07-19: 22→30に拡大)
+          div.style.fontSize = "30px";
           // ★アンカー位置ズレの修正：display:blockのままだと、余白を含めた
           // 大きな箱を基準にMapKitがアンカー計算してしまい、実際のタップ位置と
           // 絵文字の見た目の位置がズレる。inline-block化し、絵文字ぴったりの
@@ -1607,18 +1637,34 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         {
           draggable: false,
           calloutEnabled: true,
-          calloutOffset: new DOMPoint(-10.5, 17),
+          // ★2026-07-19：吹き出しを🪳の真上・中央に出す（以前の(-10.5,17)は
+          //   横ズレの原因で、🪳がボタンの間に挟まって見えていた）
+          calloutOffset: new DOMPoint(0, 12),
         }
       );
 
       annotation.callout = {
         calloutElementForAnnotation: () => {
+          // ============================================================
+          // ★2026-07-19 スマホ対応：吹き出しを白箱＋しっぽ付きに変更
+          // 透明のまま地図に重なると読みにくかったため、漫画の吹き出しの
+          // ように白い箱で囲い、下辺中央から🪳へ向かう三角のしっぽを付けた。
+          // ============================================================
           const container = document.createElement("div");
-          container.style.textAlign = "center";
-          container.style.minWidth = "200px";
-          container.innerHTML = `
-            <p style="margin:0 0 12px;font-size:13px;color:#292524;">ドラッグして位置を調整してください</p>
-          `;
+          container.style.cssText =
+            "position:relative;background:#FFFFFF;border-radius:12px;padding:12px 14px;box-shadow:0 4px 16px rgba(0,0,0,0.18);text-align:center;min-width:210px;";
+
+          // 🪳へ向かう三角のしっぽ
+          const tail = document.createElement("div");
+          tail.style.cssText =
+            "position:absolute;left:50%;bottom:-8px;transform:translateX(-50%);width:0;height:0;" +
+            "border-left:8px solid transparent;border-right:8px solid transparent;border-top:8px solid #FFFFFF;";
+          container.appendChild(tail);
+
+          const msg = document.createElement("p");
+          msg.textContent = "ドラッグして位置を調整してください";
+          msg.style.cssText = "margin:0 0 12px;font-size:13px;color:#292524;";
+          container.appendChild(msg);
 
           const cancelBtn = document.createElement("button");
           cancelBtn.textContent = "キャンセル";
@@ -1678,22 +1724,23 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       <SearchBar onSearch={handleSearch} />
 
       {/*
-        🎨 目撃件数の凡例（2026-07-19 スマホ対応でコンパクト化・位置固定）
-        位置の微調整は、コンポーネント上部の LEGEND_TOP / LEGEND_RIGHT で行う。
+        🎨 目撃件数の凡例（PC=右上・従来サイズ／スマホ=左下・やや小さめ）
+        位置・サイズの微調整は、コンポーネント上部の LEGEND_PC / LEGEND_SP で行う。
       */}
       <div
         style={{
           position: "absolute",
-          top: LEGEND_TOP,
-          right: LEGEND_RIGHT,
+          ...(isMobile
+            ? { bottom: LEGEND_SP.bottom, left: LEGEND_SP.left }
+            : { top: LEGEND_PC.top, right: LEGEND_PC.right }),
           background: "white",
           borderRadius: 8,
-          padding: "6px 10px",
+          padding: isMobile ? LEGEND_SP.pad : LEGEND_PC.pad,
           boxShadow: "0 2px 10px rgba(0,0,0,0.15)",
-          fontSize: 11,
+          fontSize: isMobile ? LEGEND_SP.font : LEGEND_PC.font,
           color: "#292524",
           zIndex: 10,
-          lineHeight: 1.7,
+          lineHeight: isMobile ? LEGEND_SP.line : LEGEND_PC.line,
           userSelect: "none",
         }}
       >
@@ -1706,7 +1753,15 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
             marginBottom: legendCollapsed ? 0 : 4,
           }}
         >
-          <span style={{ fontSize: 11, color: "#78716C", fontWeight: 700 }}>目撃件数</span>
+          <span
+            style={{
+              fontSize: (isMobile ? LEGEND_SP.font : LEGEND_PC.font) - 2,
+              color: "#78716C",
+              fontWeight: 700,
+            }}
+          >
+            目撃件数
+          </span>
           <button
             type="button"
             onClick={() => setLegendCollapsed((v) => !v)}
@@ -1714,7 +1769,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
               border: "none",
               background: "transparent",
               cursor: "pointer",
-              fontSize: 12,
+              fontSize: isMobile ? LEGEND_SP.font : LEGEND_PC.font,
               color: "#78716C",
               padding: 0,
               lineHeight: 1,
@@ -1727,12 +1782,12 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
         {!legendCollapsed &&
           COUNT_COLOR_BUCKETS.map((bucket) => (
-            <div key={bucket.label} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div key={bucket.label} style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span
                 style={{
                   display: "inline-block",
-                  width: 12,
-                  height: 12,
+                  width: isMobile ? LEGEND_SP.swatch : LEGEND_PC.swatch,
+                  height: isMobile ? LEGEND_SP.swatch : LEGEND_PC.swatch,
                   borderRadius: 3,
                   background: `rgb(${bucket.rgb})`,
                   border: "1px solid rgba(0,0,0,0.15)",

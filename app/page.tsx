@@ -279,8 +279,9 @@ export default function Home() {
     boxShadow: "0 2px 10px rgba(0,0,0,0.15)",
     zIndex: 1000,
     pointerEvents: "none",
+    whiteSpace: "nowrap", // ★2026-07-19：白箱が文字幅に追従し、必ず1行で表示される
   }}>
-    建物をタップしてください
+    目撃した場所をタップしてください
   </div>
 )}
 
