@@ -181,6 +181,19 @@ const COUNT_COLOR_BUCKETS: CountColorBucket[] = [
   { maxCount: Infinity, rgb: "106, 64, 205", label: "81件以上" }, // 紫
 ];
 
+// ============================================================
+// 🏢 フタ（削除依頼建物の霧隠し）の塗り色（2026-07-19 追加）
+//
+// Apple標準地図（ライトモード）の建物色に合わせたグレー。
+// ★【地図と見比べてフタが浮くようなら、ここを微調整する】★
+// 全フタがこの1色を参照するので、変えれば全部に即反映される。
+//
+// 端末による色ズレ対策：地図側をライトモード固定にしてある
+// （setupMapのcolorScheme指定）。ダークモードのiPhoneでも地図は
+// ライト表示になるため、この色が常に建物色と一致する。
+// ============================================================
+const COVER_BUILDING_COLOR = "#E4E2DD";
+
 function getColorRgbForCount(count: number): string {
   const bucket = COUNT_COLOR_BUCKETS.find((b) => count <= b.maxCount);
   return bucket ? bucket.rgb : COUNT_COLOR_BUCKETS[COUNT_COLOR_BUCKETS.length - 1].rgb;
@@ -1233,6 +1246,132 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     if (mapRef.current) renderAdminPinsRef.current(mapRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adminKey]);
+
+  // ============================================================
+  // 🏢 フタ：削除依頼建物の霧隠し（2026-07-19 追加）
+  //
+  // 【仕組み】
+  // excluded_areasのうちcover=trueの形を、建物色(COVER_BUILDING_COLOR)で
+  // 塗った画像として、霧より上のレイヤーに重ねる。霧の描画処理そのものには
+  // 一切手を入れない（＝霧が何回描き直されても、フタは常に上にいる）。
+  //
+  // 【軽さの設計】
+  // ・「今画面に見えている範囲」のフタだけを取得・描画する（bbox方式）。
+  //   フタの総数が1万でも、一度に描くのは画面内の数枚〜数十枚だけ
+  // ・広域表示(latitudeDelta>0.3≒約33km)ではフタは点以下のサイズになる
+  //   ので、取得も描画もしない
+  // ・取得APIは30秒キャッシュ付き。パン連発でもサーバー負荷は増えない
+  //
+  // 【重なり順の担保】
+  // 霧もフタもMapKitのAnnotationで、後から追加した方が上に描かれる。
+  // region-change-endのたびに「霧→フタ」の順で描き直すので、フタは
+  // 常に霧の上になる。管理者ピン(📍)はさらに後＝フタより上。
+  // ============================================================
+  const coverAnnotationsRef = useRef<any[]>([]);
+  const renderCoversRef = useRef<(map: any) => void>(() => {});
+
+  const renderCovers = async (map: any) => {
+    if (!map || !window.mapkit) return;
+
+    const clearCovers = () => {
+      coverAnnotationsRef.current.forEach((a) => map.removeAnnotation(a));
+      coverAnnotationsRef.current = [];
+    };
+
+    const span = map.region.span;
+    const center = map.region.center;
+
+    // 広域表示ではフタは見えないので描かない（軽さ優先）
+    if (span.latitudeDelta > 0.3) {
+      clearCovers();
+      return;
+    }
+
+    try {
+      // 表示範囲の2倍を先読み（少しのパンでは欠けないように）
+      const qs =
+        `latMin=${center.latitude - span.latitudeDelta}` +
+        `&latMax=${center.latitude + span.latitudeDelta}` +
+        `&lngMin=${center.longitude - span.longitudeDelta}` +
+        `&lngMax=${center.longitude + span.longitudeDelta}`;
+      const res = await fetch(`/api/covers?${qs}`);
+      if (!res.ok) return;
+      const json = await res.json();
+
+      clearCovers();
+
+      (json.covers ?? []).forEach((c: any) => {
+        const geo = c.geojson;
+        // Polygon／MultiPolygonの外周リングだけを使う
+        //（描画ツール・円形登録とも穴なしの単純な形しか作らないため）
+        const rings: any[] =
+          geo?.type === "Polygon"
+            ? [geo.coordinates?.[0]]
+            : geo?.type === "MultiPolygon"
+              ? geo.coordinates?.map((p: any) => p?.[0])
+              : [];
+
+        rings.filter(Boolean).forEach((ring: any[]) => {
+          // 緯度経度 → 画面ピクセルに変換して、形の入る矩形を求める
+          const pts = ring.map(([lng, lat]: [number, number]) =>
+            map.convertCoordinateToPointOnPage(
+              new window.mapkit.Coordinate(lat, lng)
+            )
+          );
+          const xs = pts.map((p: any) => p.x);
+          const ys = pts.map((p: any) => p.y);
+          const minX = Math.min(...xs);
+          const maxX = Math.max(...xs);
+          const minY = Math.min(...ys);
+          const maxY = Math.max(...ys);
+          const w = Math.ceil(maxX - minX);
+          const h = Math.ceil(maxY - minY);
+          // 小さすぎ（見えない）・大きすぎ（画面を覆う異常値）はスキップ
+          if (w < 2 || h < 2 || w > 4000 || h > 4000) return;
+
+          // フタの画像をCanvasで作る（建物色で塗りつぶし）
+          const canvas = document.createElement("canvas");
+          canvas.width = w + 2;
+          canvas.height = h + 2;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return;
+          ctx.fillStyle = COVER_BUILDING_COLOR;
+          ctx.strokeStyle = COVER_BUILDING_COLOR;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          pts.forEach((p: any, i: number) => {
+            const x = p.x - minX + 1;
+            const y = p.y - minY + 1;
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          });
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+
+          // 形の中心座標にアノテーションとして置く
+          const centerCoord = map.convertPointOnPageToCoordinate(
+            new DOMPoint(minX + w / 2, minY + h / 2)
+          );
+          const ann = new window.mapkit.Annotation(
+            centerCoord,
+            () => {
+              const el = document.createElement("div");
+              el.style.pointerEvents = "none"; // タップは地図へ素通し（霧と同じ方針）
+              el.appendChild(canvas);
+              return el;
+            },
+            { enabled: false, anchorOffset: new DOMPoint(0, 0) }
+          );
+          map.addAnnotation(ann);
+          coverAnnotationsRef.current.push(ann);
+        });
+      });
+    } catch {
+      /* 取得失敗時は何もしない（次のパン・ズームで再試行される） */
+    }
+  };
+  renderCoversRef.current = renderCovers;
   const onOutOfServiceRef = useRef(onOutOfService);
 
   // ============================================================
@@ -1399,14 +1538,24 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         isMobileInit ? MIN_CAMERA_DISTANCE_METERS_SP : MIN_CAMERA_DISTANCE_METERS_PC
       );
 
+      // ============================================================
+      // ★2026-07-19 フタ対応：地図をライトモード固定にする
+      // 端末がダークモードでも地図はライト表示になる。フタの色
+      // (COVER_BUILDING_COLOR)を全端末で建物色と一致させるための措置。
+      // （ダーク地図に明るいグレーのフタが浮くのを防ぐ）
+      // ============================================================
+      map.colorScheme = window.mapkit.Map.ColorSchemes.Light;
+
       map.addEventListener("region-change-end", () => {
         renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
         applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
+        renderCoversRef.current(map); // 🏢フタ（霧の後に描く＝霧より上）
         renderAdminPinsRef.current(map); // 管理者モード時のみ実際に描画される
       });
 
       renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
       applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
+      renderCoversRef.current(map);
       renderAdminPinsRef.current(map);
 
       map.addEventListener("single-tap", async (event: any) => {

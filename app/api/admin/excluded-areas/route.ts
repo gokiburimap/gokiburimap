@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await supabase
     .from("excluded_areas")
-    .select("id, name, reason, created_at")
+    .select("id, name, reason, cover, created_at")
     .order("id", { ascending: false });
 
   if (error) {
@@ -50,6 +50,8 @@ export async function POST(req: NextRequest) {
   if (typeof name !== "string" || !name.trim()) {
     return NextResponse.json({ error: "name_required" }, { status: 400 });
   }
+  // フタもするか（未指定はfalse＝投稿禁止だけ）
+  const cover = body.cover === true;
 
   const supabase = getServiceClient();
 
@@ -70,6 +72,7 @@ export async function POST(req: NextRequest) {
       p_lat: body.lat,
       p_lng: body.lng,
       p_radius_m: body.radius_m,
+      p_cover: cover,
     });
     if (error) {
       console.error("円形エリアの登録に失敗:", error);
@@ -114,6 +117,7 @@ export async function POST(req: NextRequest) {
         p_name: name.trim() + suffix,
         p_reason: reason ?? null,
         p_geojson: geometries[i],
+        p_cover: cover,
       });
       if (error) {
         console.error("GeoJSONエリアの登録に失敗:", error);
