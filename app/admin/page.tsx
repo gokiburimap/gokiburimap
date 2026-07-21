@@ -50,7 +50,6 @@ interface ExcludedArea {
   id: number;
   name: string;
   reason: string | null;
-  cover: boolean;
   created_at: string;
 }
 
@@ -72,7 +71,6 @@ export default function AdminPage() {
   const [areaName, setAreaName] = useState("");
   const [areaReason, setAreaReason] = useState("");
   const [areaGeojson, setAreaGeojson] = useState("");
-  const [coverFlag, setCoverFlag] = useState(false); // フタもするか（削除依頼対応用）
   const [armedPurgeId, setArmedPurgeId] = useState<number | null>(null); // 一括削除の2段階確認
 
   // ============================================================
@@ -124,14 +122,10 @@ export default function AdminPage() {
       // 地図モードは satellite state の useEffect が反映する（デフォルトは標準地図）
 
       // ============================================================
-      // ★2026-07-19 フタ対応：
-      // ・限界までズームできるようにする（建物を正確に囲うため。
-      //   一般地図の法的ズーム制限は運営作業には不要）
-      // ・ライトモード固定（メイン地図と同じ。端末のダークモードの
-      //   影響を受けず、フタの色合わせが正確にできる）
+      // ★建物を正確に囲うため、管理画面の地図だけ限界までズーム解禁。
+      // 一般ユーザー向けの法的ズーム制限は、運営の作図作業には不要。
       // ============================================================
       map.cameraZoomRange = new mk.CameraZoomRange(15);
-      map.colorScheme = mk.Map.ColorSchemes.Light;
 
       // ============================================================
       // タップで頂点を追加（2026-07-19 描画改良版）
@@ -399,16 +393,14 @@ export default function AdminPage() {
         name: areaName.trim(),
         reason: areaReason.trim() || null,
         geojson: { type: "Polygon", coordinates: [ring] },
-        cover: coverFlag, // フタもするか
       }),
     });
     if (res.ok) {
-      setMessage(coverFlag ? "禁止エリアを登録しました（フタあり）" : "禁止エリアを登録しました");
+      setMessage("禁止エリアを登録しました");
       setDrawPoints([]);
       setDrawClosed(false);
       setAreaName("");
       setAreaReason("");
-      setCoverFlag(false);
       loadAreas();
     } else {
       const j = await res.json().catch(() => null);
@@ -554,7 +546,6 @@ export default function AdminPage() {
         lat: r.lat,
         lng: r.lng,
         radius_m: radiusM,
-        cover: false, // 即応用はフタなし（フタは削除依頼対応時に描画ツールで正確に作る）
       }),
     });
     if (res.ok) {
@@ -578,7 +569,6 @@ export default function AdminPage() {
         name: areaName.trim(),
         reason: areaReason.trim() || null,
         geojson: areaGeojson,
-        cover: coverFlag, // フタもするか
       }),
     });
     if (res.ok) {
@@ -586,7 +576,6 @@ export default function AdminPage() {
       setAreaName("");
       setAreaReason("");
       setAreaGeojson("");
-      setCoverFlag(false);
       loadAreas();
     } else {
       const json = await res.json().catch(() => null);
@@ -873,30 +862,6 @@ export default function AdminPage() {
               boxSizing: "border-box",
             }}
           />
-          {/* ============================================================
-              🏢 フタ指定（2026-07-19 追加）
-              チェックすると、この形に「建物色の板」を霧より上に重ね、
-              地図上でこの建物に霧がかからないように見せる。
-              管理会社・オーナーからの削除依頼対応用。
-              チェックなし＝投稿禁止だけ（皇居など。霧は自然に任せる）
-             ============================================================ */}
-          <label
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              fontSize: 13,
-              marginBottom: 16,
-              cursor: "pointer",
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={coverFlag}
-              onChange={(e) => setCoverFlag(e.target.checked)}
-            />
-            フタもする（この形に建物色の板を重ねて、霧がかからないように見せる。削除依頼対応用）
-          </label>
 
           {/* ============================================================
               方法A（推奨）：地図上で建物の角をタップして囲う
@@ -1019,7 +984,6 @@ export default function AdminPage() {
                 <th style={{ padding: 8 }}>#</th>
                 <th style={{ padding: 8 }}>名前</th>
                 <th style={{ padding: 8 }}>理由</th>
-                <th style={{ padding: 8 }}>フタ</th>
                 <th style={{ padding: 8 }}>登録日</th>
                 <th style={{ padding: 8 }}>操作</th>
               </tr>
@@ -1030,7 +994,6 @@ export default function AdminPage() {
                   <td style={{ padding: 8 }}>{a.id}</td>
                   <td style={{ padding: 8 }}>{a.name}</td>
                   <td style={{ padding: 8 }}>{a.reason ?? "-"}</td>
-                  <td style={{ padding: 8, textAlign: "center" }}>{a.cover ? "○" : "－"}</td>
                   <td style={{ padding: 8, whiteSpace: "nowrap" }}>
                     {new Date(a.created_at).toLocaleDateString("ja-JP")}
                   </td>
