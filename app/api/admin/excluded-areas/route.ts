@@ -151,27 +151,12 @@ export async function PUT(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
-  const areaId = Number(body?.purge_area_id ?? body?.hide_area_id);
+  const areaId = Number(body?.purge_area_id);
   if (!Number.isInteger(areaId) || areaId <= 0) {
     return NextResponse.json({ error: "invalid_id" }, { status: 400 });
   }
 
   const supabase = getServiceClient();
-
-  // ★2026-07-20：hide_area_id が来たら「霧を消す」（投稿は残す）、
-  //   purge_area_id が来たら従来通り「投稿ごと削除」。
-  if (body?.hide_area_id) {
-    const { data: hiddenCount, error: hideErr } = await supabase.rpc(
-      "hide_reports_in_excluded_area",
-      { p_area_id: areaId }
-    );
-    if (hideErr) {
-      console.error("エリア内の霧消しに失敗:", hideErr);
-      return NextResponse.json({ error: "internal_error" }, { status: 500 });
-    }
-    return NextResponse.json({ ok: true, hidden: hiddenCount ?? 0 });
-  }
-
   const { data: deletedCount, error } = await supabase.rpc(
     "delete_reports_in_excluded_area",
     { p_area_id: areaId }
