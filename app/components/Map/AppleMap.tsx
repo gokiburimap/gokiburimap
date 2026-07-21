@@ -1014,11 +1014,46 @@ function renderMarkers(
       icon = getCachedClusterIconUrl(count, displaySize);
     }
 
-    const annotation = new window.mapkit.ImageAnnotation(coordinate, {
-      url: { 1: icon },
-      size: { width: displaySize, height: displaySize },
-      anchorOffset: new DOMPoint(0, -displaySize / 2),
-    });
+    // ============================================================
+    // ★2026-07-20 幻の指バグの根本修正：自前<img>方式に変更
+    //
+    // 従来は mapkit.ImageAnnotation を使っていたが、それだと画像要素に
+    // CSSを指定できない。iPhoneのSafariは<img>を指で押さえたままにすると
+    // 長押しプレビュー等の独自動作を発動し、その瞬間ページへのタッチ通知を
+    // 打ち切る。するとMapKitのタッチ勘定が狂い「幻の指」が残る：
+    //   ・1本指スライド → MapKitには2本に見え、ピンチ(ズーム)になる
+    //   ・2本指ピンチ → 3本に見え、全く反応しない
+    // ピンチは静止の瞬間があるので長押し判定が進む。パンは動き続けるので
+    // ならない。霧のない場所は<img>の上ではないので起きない。
+    //
+    // 対策として自前で<img>を作り、以下を直接指定する：
+    //   ・-webkit-touch-callout:none（長押しメニュー禁止）
+    //   ・user-select / user-drag none（選択・ドラッグ禁止）
+    //   ・霧は pointer-events:none（タッチ完全素通し＝地図の素の面と同じ）
+    // 円(🪳+数字)はタップで展開ズームするため pointer-events は残す。
+    // ============================================================
+    const annotation = new window.mapkit.Annotation(
+      coordinate,
+      () => {
+        const img = document.createElement("img");
+        img.src = icon;
+        img.alt = "";
+        img.draggable = false;
+        img.style.width = `${displaySize}px`;
+        img.style.height = `${displaySize}px`;
+        img.style.display = "block";
+        img.style.userSelect = "none";
+        (img.style as any).webkitUserSelect = "none";
+        (img.style as any).webkitUserDrag = "none";
+        (img.style as any).webkitTouchCallout = "none";
+        if (isCloudZoom) {
+          // 霧：DOMレベルでもタッチを素通しさせる（幻の指の発生源を断つ）
+          img.style.pointerEvents = "none";
+        }
+        return img;
+      },
+      { anchorOffset: new DOMPoint(0, -displaySize / 2) }
+    );
 
     // ============================================================
     // ★2026-07-19 スマホ操作バグの根本修正：霧はタップ対象にしない
