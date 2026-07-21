@@ -1132,6 +1132,47 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     });
 
 
+    // ============================================================
+    // 🧽 霧だけ消す/戻すボタン（投稿データは残す）
+    // 「隠す」＝この投稿を地図の霧の計算から外す（＝霧が消える）。
+    // 投稿本体・住所・IPログは残るので、自作自演の証拠・開示請求に使える。
+    // すでに隠れている投稿なら「霧を戻す」に切り替わる。
+    // ============================================================
+    const isHidden = r.hidden === true;
+    const hideBtn = document.createElement("button");
+    hideBtn.textContent = isHidden ? "霧を戻す（再表示）" : "この投稿の霧だけ消す";
+    hideBtn.style.cssText =
+      "margin-top:8px;width:100%;background:" +
+      (isHidden ? "#662510" : "transparent") +
+      ";color:" + (isHidden ? "#FFFFFF" : "#662510") +
+      ";border:1.5px solid #662510;padding:7px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;";
+    hideBtn.onclick = async () => {
+      hideBtn.disabled = true;
+      hideBtn.textContent = isHidden ? "戻しています..." : "消しています...";
+      try {
+        const res = await fetch("/api/admin/reports", {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            "x-admin-key": adminKeyRef.current ?? "",
+          },
+          body: JSON.stringify({ id: r.id, hidden: !isHidden }),
+        });
+        if (!res.ok) {
+          hideBtn.disabled = false;
+          hideBtn.textContent = "失敗しました。もう一度押してください";
+          return;
+        }
+        r.hidden = !isHidden;
+        fetchReports(); // 霧を描き直す
+        renderAdminPinsRef.current(map); // ピンの状態も更新
+      } catch {
+        hideBtn.disabled = false;
+        hideBtn.textContent = "通信失敗。もう一度押してください";
+      }
+    };
+    box.appendChild(hideBtn);
+
     const delBtn = document.createElement("button");
     delBtn.textContent = "この投稿を削除";
     delBtn.style.cssText =
@@ -1303,9 +1344,12 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     // 取得カラムを id, lat, lng, nearby_count に絞る方針は従来通り
     // （地図に不要な情報をブラウザに配らない＋転送量削減）。
     // ============================================================
+    // ★hidden=true（クレーム対応で霧だけ消した投稿）は地図に出さない。
+    //   count と本取得の両方に同じ条件を掛ける（揃えないと件数がズレて空ページが出る）。
     const { count, error: countError } = await supabase
       .from("reports")
-      .select("id", { count: "exact", head: true });
+      .select("id", { count: "exact", head: true })
+      .eq("hidden", false);
 
     if (countError) {
       console.error("reports件数取得エラー:", countError);
@@ -1323,6 +1367,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         supabase
           .from("reports")
           .select("id, lat, lng, nearby_count")
+          .eq("hidden", false)
           .order("id", { ascending: true })
           .range(i * PAGE_SIZE, (i + 1) * PAGE_SIZE - 1)
       )
