@@ -1046,46 +1046,37 @@ function renderMarkers(
         (img.style as any).webkitUserSelect = "none";
         (img.style as any).webkitUserDrag = "none";
         (img.style as any).webkitTouchCallout = "none";
-        if (isCloudZoom) {
-          // 霧：DOMレベルでもタッチを素通しさせる（幻の指の発生源を断つ）
-          img.style.pointerEvents = "none";
-        }
+        // ★2026-07-20 第4版：霧だけでなく円(🪳+数字)も含め、全マーカーを
+        //   タッチ完全素通しにする。タッチに反応するアイコンの上に指を
+        //   置いてピンチすると、MapKitのタッチ帳簿が狂い「幻の指」が残る
+        //   ことが実機検証で確定したため（霧はpointer-events:noneで直り、
+        //   円だけ壊れ続けた＝発生条件は「触覚のあるアイコン」そのもの）。
+        //   円のタップ展開は、地図側のsingle-tapで自前判定する（下記参照）。
+        img.style.pointerEvents = "none";
         return img;
       },
       { anchorOffset: new DOMPoint(0, -displaySize / 2) }
     );
 
     // ============================================================
-    // ★2026-07-19 スマホ操作バグの根本修正：霧はタップ対象にしない
-    //
-    // ズームインすると霧は画面の大部分を覆う巨大な画像になるが、
-    // タップに反応する設定のままだったため、
-    //   ・指でなぞる → 霧が「タップされた」と誤解 → 勝手に展開ズーム
-    //   ・ピンチ → 霧が指を吸収し、地図までジェスチャーが届かない
-    // という誤動作が起きていた（「霧に触れるとバグる」symptomatic）。
-    //
-    // 霧(isCloudZoom)は enabled=false でタッチを地図に素通しさせる。
-    // 円(🪳＋数字)は従来通りタップで展開ズームできる。
-    // __baseEnabled は applyAnnotationInteractivity が投稿位置選択中の
-    // 一時無効化から復帰するときの「本来の値」として参照する。
+    // 全マーカーは触覚ゼロ（enabled=false・pointer-events:none）。
+    // タッチは常に地図の素の面に届くので、ジェスチャーが壊れる余地がない。
+    // __baseEnabled も常にfalse（applyAnnotationInteractivityが復帰時に
+    // 参照する「本来の値」。触覚ゼロ方針のため全マーカーfalseで固定）。
     // ============================================================
-    (annotation as any).__baseEnabled = !isCloudZoom;
-    annotation.enabled = !isCloudZoom;
+    (annotation as any).__baseEnabled = false;
+    annotation.enabled = false;
 
+    // 円(🪳＋数字)のタップ展開ズームは、アノテーションのselectではなく
+    // 地図のsingle-tapハンドラで自前判定する。その判定に必要な情報
+    // （クラスタID・中心座標・画面上の半径）をアノテーションに持たせる。
     if (isCluster && !isCloudZoom) {
-      annotation.addEventListener("select", () => {
-        const expansionZoom = Math.min(
-          clusterIndexRef.current!.getClusterExpansionZoom(c.properties.cluster_id),
-          MAX_CLUSTER_ZOOM
-        );
-        const newSpanDeg = 360 / Math.pow(2, expansionZoom);
-        map.setRegionAnimated(
-          new window.mapkit.CoordinateRegion(
-            new window.mapkit.Coordinate(offsetLat, offsetLng),
-            new window.mapkit.CoordinateSpan(newSpanDeg, newSpanDeg)
-          )
-        );
-      });
+      (annotation as any).__tapExpand = {
+        clusterId: c.properties.cluster_id,
+        lat: offsetLat,
+        lng: offsetLng,
+        radiusPx: displaySize / 2,
+      };
     }
     return annotation;
   });
@@ -1525,7 +1516,43 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       renderAdminPinsRef.current(map);
 
       map.addEventListener("single-tap", async (event: any) => {
-        if (!isSelectingRef.current && !reportPosRef.current) return;
+        // ============================================================
+        // 🪳 円(🪳+数字)のタップ展開ズーム（2026-07-20 自前判定に変更）
+        //
+        // 全マーカーを触覚ゼロにしたため、アノテーションのselectは
+        // もう発火しない。代わりに、地図が受けたタップの画面座標と、
+        // 各円の画面上の中心・半径を比べて「円が押されたか」を判定する。
+        // 通常閲覧中（投稿フロー外）のみ。
+        // ============================================================
+        if (!isSelectingRef.current && !reportPosRef.current) {
+          const tapPt = event.pointOnPage;
+          for (const ann of markersRef.current) {
+            const t = (ann as any)?.__tapExpand;
+            if (!t) continue; // 霧には__tapExpandが無い＝展開対象外
+            try {
+              const p = map.convertCoordinateToPointOnPage(
+                new window.mapkit.Coordinate(t.lat, t.lng)
+              );
+              if (Math.hypot(tapPt.x - p.x, tapPt.y - p.y) <= t.radiusPx) {
+                const expansionZoom = Math.min(
+                  clusterIndexRef.current!.getClusterExpansionZoom(t.clusterId),
+                  MAX_CLUSTER_ZOOM
+                );
+                const newSpanDeg = 360 / Math.pow(2, expansionZoom);
+                map.setRegionAnimated(
+                  new window.mapkit.CoordinateRegion(
+                    new window.mapkit.Coordinate(t.lat, t.lng),
+                    new window.mapkit.CoordinateSpan(newSpanDeg, newSpanDeg)
+                  )
+                );
+                return;
+              }
+            } catch {
+              /* 座標変換に失敗した円はスキップ */
+            }
+          }
+          return; // 円に当たらなければ、通常閲覧中は何もしない
+        }
 
         const coordinate = map.convertPointOnPageToCoordinate(event.pointOnPage);
         const lat = coordinate.latitude;
