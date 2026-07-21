@@ -408,6 +408,22 @@ export default function AdminPage() {
     }
   };
 
+  // クレーム対応：エリア内の霧を消す（投稿は残す・2026-07-20）
+  const hideArea = async (id: number) => {
+    const res = await api("/api/admin/excluded-areas", {
+      method: "PUT",
+      body: JSON.stringify({ hide_area_id: id }),
+    });
+    if (res.ok) {
+      const json = await res.json();
+      setMessage(
+        `エリア #${id} 内の投稿の霧を${json.hidden}件消しました（投稿・記録は残っています。地図で確認してください）`
+      );
+    } else {
+      setMessage("エリア内の霧消しに失敗しました");
+    }
+  };
+
   // クレーム対応：エリア内の既存投稿を全削除（2段階：1回目で赤くなり、2回目で実行）
   const purgeArea = async (id: number) => {
     if (armedPurgeId !== id) {
@@ -998,6 +1014,12 @@ export default function AdminPage() {
                     {new Date(a.created_at).toLocaleDateString("ja-JP")}
                   </td>
                   <td style={{ padding: 8, whiteSpace: "nowrap" }}>
+                    <button
+                      onClick={() => hideArea(a.id)}
+                      style={{ ...btn(), marginRight: 6 }}
+                    >
+                      エリア内の霧を消す
+                    </button>
                     <button
                       onClick={() => purgeArea(a.id)}
                       style={{
