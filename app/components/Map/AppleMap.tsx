@@ -1473,56 +1473,51 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
 
       // ============================================================
-      // 🖐 ジェスチャー中は霧を描き直さない（2026-07-20 固まりバグ根本修正）
+      // 🖐 地図が完全に静止するまで霧を描き直さない（2026-07-20 第3版）
       //
-      // 【症状】霧の上でピンチを繰り返すと固まり、以後「1本指スライドが
-      // ズームになる」「2本指ピンチが無反応」になる。
+      // 【これまでの経緯】ピンチ連打で固まる問題に対し、タッチ検知で
+      // 描き直しを保留する対策を入れたが、MapKitがタッチイベントを内部で
+      // 握りつぶすと検知自体が発動せず、保留が効いていなかった疑いが強い。
       //
-      // 【原因】ピンチの最中にも region-change-end が発火することがあり、
-      // そのたび renderMarkers が「指が今触れている霧のDOM要素」を
-      // removeAnnotation で消して作り直していた。iOSのSafariでは、
-      // タッチが始まった要素が指を離す前に消されると touchend が届かなく
-      // なる。その結果 MapKit が「指がまだ1本残っている」と誤認し続け、
-      // 以後の1本指操作を「2本目の指」と解釈してピンチ扱いにする
-      // （＝幻の指。1本指スライドでズームする症状と完全に一致する）。
+      // 【今回の方針】ブラウザのタッチ検知には一切頼らない。MapKit自身が
+      // 発する region-change-start / end（動き始め・動き終わり）だけを使う。
+      // これはMapKit内部の合図なので、握りつぶされることがない。
       //
-      // 【対策】指が1本でも画面に触れている間は霧の描き直しを保留し、
-      // 全ての指が離れた瞬間に実行する。指の下から要素を消さないので
-      // touchend が確実に届き、誤認が起きない。
-      // PCはタッチイベントが無いので従来と全く同じ動作。
+      //  ・region-change-start（動き始め）→ 予約中の描き直しをキャンセル
+      //  ・region-change-end（動き終わり）→ 0.2秒後に描き直しを「予約」
+      //  ・0.2秒以内に次の動きが始まれば予約は消える
+      //
+      // 連続ピンチ中は「動き終わり→即・次の動き始め」が続くため、
+      // 描き直しは1回も走らない。手が完全に止まって0.2秒たったときだけ
+      // 描き直す。地図が動いている最中にアノテーションの削除・追加が
+      // 走ることが完全に無くなり、ジェスチャー破壊の余地を断つ。
+      //
+      // 【副作用】連続操作中は霧が古いサイズのまま表示され、手を止めた
+      // 瞬間にスッと描き直される。これは意図した挙動。
       // ============================================================
-      let activeTouches = 0;
-      let pendingRender = false;
+      const RENDER_QUIET_MS = 200;
+      let renderTimer: ReturnType<typeof setTimeout> | null = null;
       const doRender = () => {
         renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
         applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
         renderAdminPinsRef.current(map); // 管理者モード時のみ実際に描画される
       };
-      const touchTarget = mapContainerRef.current;
-      if (touchTarget) {
-        const onTouch = (e: TouchEvent) => {
-          activeTouches = e.touches.length;
-        };
-        const onTouchEnd = (e: TouchEvent) => {
-          activeTouches = e.touches.length;
-          if (activeTouches === 0 && pendingRender) {
-            pendingRender = false;
-            doRender();
-          }
-        };
-        touchTarget.addEventListener("touchstart", onTouch, { passive: true });
-        touchTarget.addEventListener("touchmove", onTouch, { passive: true });
-        touchTarget.addEventListener("touchend", onTouchEnd, { passive: true });
-        touchTarget.addEventListener("touchcancel", onTouchEnd, { passive: true });
-      }
+
+      map.addEventListener("region-change-start", () => {
+        // 動き始めたら、予約済みの描き直しを取り消す
+        if (renderTimer) {
+          clearTimeout(renderTimer);
+          renderTimer = null;
+        }
+      });
 
       map.addEventListener("region-change-end", () => {
-        if (activeTouches > 0) {
-          // 指がまだ触れている：描き直しは全部の指が離れてから
-          pendingRender = true;
-          return;
-        }
-        doRender();
+        // 動き終わってから0.2秒静止が続いたときだけ描き直す
+        if (renderTimer) clearTimeout(renderTimer);
+        renderTimer = setTimeout(() => {
+          renderTimer = null;
+          doRender();
+        }, RENDER_QUIET_MS);
       });
 
       renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
