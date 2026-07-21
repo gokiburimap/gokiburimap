@@ -182,17 +182,11 @@ const COUNT_COLOR_BUCKETS: CountColorBucket[] = [
 ];
 
 // ============================================================
-// 🏢 フタ（削除依頼建物の霧隠し）の塗り色（2026-07-19 追加）
-//
-// Apple標準地図（ライトモード）の建物色に合わせたグレー。
-// ★【地図と見比べてフタが浮くようなら、ここを微調整する】★
-// 全フタがこの1色を参照するので、変えれば全部に即反映される。
-//
-// 端末による色ズレ対策：地図側をライトモード固定にしてある
-// （setupMapのcolorScheme指定）。ダークモードのiPhoneでも地図は
-// ライト表示になるため、この色が常に建物色と一致する。
+// 🕳 切り抜き方式では色を塗らない（完全透明に抜く）ため、
+//    フタ方式で使っていた建物色の定数は廃止した（2026-07-20）。
+//    地図をライトモード固定にする措置だけは、穴から透ける地図の
+//    色を全端末で安定させるために残している（setupMap内）。
 // ============================================================
-const COVER_BUILDING_COLOR = "#E4E2DD";
 
 function getColorRgbForCount(count: number): string {
   const bucket = COUNT_COLOR_BUCKETS.find((b) => count <= b.maxCount);
@@ -534,6 +528,83 @@ function getCachedCloudIconUrl(count: number, colorCount: number, size: number, 
   return icon;
 }
 
+// ============================================================
+// 🕳 霧画像に切り抜きの穴を開ける（2026-07-20 追加）
+//
+// できあがった霧のdataURL画像に対して、切り抜きエリア(建物)の形を
+// destination-out(消しゴム)で抜き、地図が透ける穴を開けた新しいdataURLを返す。
+//
+// 【引数】
+//   baseUrl     : 穴を開ける前の霧画像(dataURL)
+//   displaySize : 霧画像の表示px(正方形の一辺)
+//   centerLat/Lng: 霧画像の中心の緯度経度(＝offsetLat/Lng)
+//   pxPerDegLat/Lng: その場所での「緯度/経度1度あたりの画面px」
+//   polysLngLat : 切り抜きエリアの多角形リスト([ [lng,lat], ... ] の配列)
+//
+// 【重要】この処理は霧画像と一体化するので、霧が地図と一緒に動いても
+// 穴は寸分違わず追従する(フタ方式の位置ズレ・遅延が起きない理由)。
+// 穴あき霧はキャッシュしない(形が毎回違うため)が、対象は画面内で
+// 切り抜きエリアに重なった数枚だけなので軽い。
+//
+// dataURL→Image→Canvasのデコードは非同期なので、Promiseで返す。
+// ============================================================
+function punchHolesInCloud(
+  baseUrl: string,
+  displaySize: number,
+  centerLat: number,
+  centerLng: number,
+  pxPerDegLat: number,
+  pxPerDegLng: number,
+  polysLngLat: Array<Array<[number, number]>>
+): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        resolve(baseUrl);
+        return;
+      }
+      // まず霧画像をそのまま描く
+      ctx.drawImage(img, 0, 0);
+
+      // 画像の中心ピクセル。canvasは霧画像(余白込みcanvasSize)だが、
+      // displaySizeに引き伸ばして表示されるので、緯度経度→px換算は
+      // 「画像の実ピクセル / displaySize」の比率で補正する
+      const scale = img.width / displaySize; // 画像実px / 表示px
+      const cx = img.width / 2;
+      const cy = img.height / 2;
+
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.fillStyle = "rgba(0,0,0,1)";
+
+      polysLngLat.forEach((poly) => {
+        ctx.beginPath();
+        poly.forEach(([lng, lat], i) => {
+          // 緯度経度 → 霧中心からの相対px（表示px基準）→ 画像実px
+          // 緯度は北が上＝画面上方向がマイナスyなので符号を反転
+          const dxDisp = (lng - centerLng) * pxPerDegLng;
+          const dyDisp = -(lat - centerLat) * pxPerDegLat;
+          const x = cx + dxDisp * scale;
+          const y = cy + dyDisp * scale;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.closePath();
+        ctx.fill();
+      });
+
+      ctx.globalCompositeOperation = "source-over";
+      resolve(canvas.toDataURL());
+    };
+    img.onerror = () => resolve(baseUrl);
+    img.src = baseUrl;
+  });
+}
+
 // ④【円の大きさはここで調整】
 // ★2026-07-17：🪳アイコン化に伴い、俯瞰時(ズームアウト)に小さすぎず、
 // ズームイン時に大きくなりすぎないよう、下限を上げ・上限を下げて範囲を狭めた。
@@ -853,7 +924,8 @@ function renderMarkers(
   map: any,
   markersRef: { current: any[] },
   clusterIndexRef: { current: Supercluster | null },
-  containerEl: HTMLDivElement | null
+  containerEl: HTMLDivElement | null,
+  coverPolys: Array<Array<[number, number]>> = []
 ) {
   if (!clusterIndexRef.current) return;
 
@@ -1014,6 +1086,11 @@ function renderMarkers(
     (annotation as any).__baseEnabled = !isCloudZoom;
     annotation.enabled = !isCloudZoom;
 
+    // 🕳 切り抜き処理が後で参照するメタ情報を付与
+    (annotation as any).__isCloud = isCloudZoom;
+    (annotation as any).__displaySize = displaySize;
+    (annotation as any).__baseIconUrl = icon; // 穴を開ける前の元画像
+
     if (isCluster && !isCloudZoom) {
       annotation.addEventListener("select", () => {
         const expansionZoom = Math.min(
@@ -1034,6 +1111,74 @@ function renderMarkers(
 
   map.addAnnotations(finalAnnotations);
   markersRef.current = finalAnnotations;
+
+  // ============================================================
+  // 🕳 切り抜き：霧に建物形の穴を開ける（2026-07-20 追加）
+  //
+  // 追加済みの霧アノテーションのうち、切り抜きエリア(coverPolys)と
+  // 重なるものだけを対象に、その霧画像へ穴を開けた版に差し替える。
+  // 差し替えは非同期(画像デコードを挟む)なので、重ならない霧の表示は
+  // 一切待たされない。対象は画面内で重なった数枚だけ＝軽い。
+  // ============================================================
+  if (coverPolys.length > 0) {
+    // この地図表示での「1度あたりの画面px」を求める（穴の座標変換に使う）
+    const c0 = map.convertCoordinateToPointOnPage(
+      new window.mapkit.Coordinate(center.latitude, center.longitude)
+    );
+    const c1 = map.convertCoordinateToPointOnPage(
+      new window.mapkit.Coordinate(center.latitude + 0.001, center.longitude + 0.001)
+    );
+    const pxPerDegLat = Math.abs(c1.y - c0.y) / 0.001;
+    const pxPerDegLng = Math.abs(c1.x - c0.x) / 0.001;
+
+    finalAnnotations.forEach((ann: any) => {
+      if (!ann.__isCloud) return; // 霧だけが対象（円は穴を開けない）
+      const aLat = ann.coordinate.latitude;
+      const aLng = ann.coordinate.longitude;
+      const fullDegLat = ann.__displaySize / pxPerDegLat;
+      const halfDegLng = ann.__displaySize / 2 / pxPerDegLng;
+
+      // この霧の緯度経度範囲。画像は座標(下端中央)から北へ伸びるので、
+      // 緯度は aLat 〜 aLat+fullDegLat、経度は中心±half。
+      const fLatMin = aLat;
+      const fLatMax = aLat + fullDegLat;
+      const fLngMin = aLng - halfDegLng;
+      const fLngMax = aLng + halfDegLng;
+
+      // 重なる切り抜きエリアだけ集める（矩形同士の粗い判定）
+      const hits = coverPolys.filter((poly) => {
+        let pLatMin = Infinity, pLatMax = -Infinity, pLngMin = Infinity, pLngMax = -Infinity;
+        poly.forEach(([lng, lat]) => {
+          if (lat < pLatMin) pLatMin = lat;
+          if (lat > pLatMax) pLatMax = lat;
+          if (lng < pLngMin) pLngMin = lng;
+          if (lng > pLngMax) pLngMax = lng;
+        });
+        return !(pLatMax < fLatMin || pLatMin > fLatMax || pLngMax < fLngMin || pLngMin > fLngMax);
+      });
+      if (hits.length === 0) return;
+
+      // 重なる霧だけ、穴あき版に差し替える。
+      // ★霧画像は anchorOffset(0,-displaySize/2) で「座標＝画像の下端中央」に
+      //   置かれ、画像は上(北)へ displaySize ぶん伸びている。つまり画像の
+      //   中心は、座標より displaySize/2 px ぶん北にある。punchHolesInCloudは
+      //   画像中心＝渡した緯度経度、として計算するので、中心緯度を上に補正する。
+      const imageCenterLat = aLat + (ann.__displaySize / 2) / pxPerDegLat;
+      punchHolesInCloud(
+        ann.__baseIconUrl,
+        ann.__displaySize,
+        imageCenterLat,
+        aLng,
+        pxPerDegLat,
+        pxPerDegLng,
+        hits
+      ).then((punchedUrl) => {
+        // 差し替え中に再描画で消えている場合があるのでガード
+        if (!markersRef.current.includes(ann)) return;
+        ann.url = { 1: punchedUrl };
+      });
+    });
+  }
 }
 
 const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
@@ -1248,47 +1393,49 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   }, [adminKey]);
 
   // ============================================================
-  // 🏢 フタ：削除依頼建物の霧隠し（2026-07-19 追加）
+  // 🕳 切り抜き（削除依頼建物の霧抜き）(2026-07-20 フタ方式から全面変更)
   //
-  // 【仕組み】
-  // excluded_areasのうちcover=trueの形を、建物色(COVER_BUILDING_COLOR)で
-  // 塗った画像として、霧より上のレイヤーに重ねる。霧の描画処理そのものには
-  // 一切手を入れない（＝霧が何回描き直されても、フタは常に上にいる）。
+  // 【フタ方式(失敗)からの転換】
+  // 旧フタは「建物色の板を別アノテーションで霧の上に重ねる」方式で、
+  // ・板が地図に追従できず位置ズレ／ズームで遅れて動く
+  // ・板の色が地図に馴染まず浮く
+  // ・板アノテーションが霧のタッチ素通し設定に割り込みバグ再発
+  // という問題を起こした。すべて「霧とは別物を後から重ねた」ことが原因。
   //
-  // 【軽さの設計】
-  // ・「今画面に見えている範囲」のフタだけを取得・描画する（bbox方式）。
-  //   フタの総数が1万でも、一度に描くのは画面内の数枚〜数十枚だけ
-  // ・広域表示(latitudeDelta>0.3≒約33km)ではフタは点以下のサイズになる
-  //   ので、取得も描画もしない
-  // ・取得APIは30秒キャッシュ付き。パン連発でもサーバー負荷は増えない
+  // 【切り抜き方式】
+  // 板は置かない。霧を描くその瞬間に、切り抜きエリアの形を
+  // destination-out(消しゴム)で霧から抜く。穴は霧の画像と一体なので、
+  // 霧が動けば穴も寸分違わず一緒に動く(位置ズレ・遅延が原理的に起きない)。
+  // 新しいアノテーションを一切足さないので、タッチ問題も起こさない。
   //
-  // 【重なり順の担保】
-  // 霧もフタもMapKitのAnnotationで、後から追加した方が上に描かれる。
-  // region-change-endのたびに「霧→フタ」の順で描き直すので、フタは
-  // 常に霧の上になる。管理者ピン(📍)はさらに後＝フタより上。
+  // 【軽さ】
+  // 穴あき霧は形が毎回違うのでキャッシュはしない。が、対象は「画面内に
+  // 見えていて、かつ切り抜きエリアと重なった霧」だけ＝せいぜい数枚。
+  // 残り大多数の霧は従来通りキャッシュが効く。全国に1万棟登録しても、
+  // 描くのは画面内の数枚だけなので軽いまま。
+  //
+  // ここでは「今画面に見えている切り抜きエリアの多角形」を取得して
+  // coverPolysRef に緯度経度のまま保持する。実際の穴あけは、霧を描く
+  // renderMarkers 側でこの多角形を画面座標に変換して行う。
   // ============================================================
-  const coverAnnotationsRef = useRef<any[]>([]);
-  const renderCoversRef = useRef<(map: any) => void>(() => {});
+  const coverPolysRef = useRef<Array<Array<[number, number]>>>([]);
 
-  const renderCovers = async (map: any) => {
+  const fetchCoverPolys = async (map: any) => {
     if (!map || !window.mapkit) return;
-
-    const clearCovers = () => {
-      coverAnnotationsRef.current.forEach((a) => map.removeAnnotation(a));
-      coverAnnotationsRef.current = [];
-    };
 
     const span = map.region.span;
     const center = map.region.center;
 
-    // 広域表示ではフタは見えないので描かない（軽さ優先）
+    // 広域表示では切り抜きは見えない(霧より小さい)ので取得しない
     if (span.latitudeDelta > 0.3) {
-      clearCovers();
+      if (coverPolysRef.current.length > 0) {
+        coverPolysRef.current = [];
+        renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current, coverPolysRef.current);
+      }
       return;
     }
 
     try {
-      // 表示範囲の2倍を先読み（少しのパンでは欠けないように）
       const qs =
         `latMin=${center.latitude - span.latitudeDelta}` +
         `&latMax=${center.latitude + span.latitudeDelta}` +
@@ -1298,80 +1445,31 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       if (!res.ok) return;
       const json = await res.json();
 
-      clearCovers();
-
+      const polys: Array<Array<[number, number]>> = [];
       (json.covers ?? []).forEach((c: any) => {
         const geo = c.geojson;
-        // Polygon／MultiPolygonの外周リングだけを使う
-        //（描画ツール・円形登録とも穴なしの単純な形しか作らないため）
         const rings: any[] =
           geo?.type === "Polygon"
             ? [geo.coordinates?.[0]]
             : geo?.type === "MultiPolygon"
               ? geo.coordinates?.map((p: any) => p?.[0])
               : [];
-
         rings.filter(Boolean).forEach((ring: any[]) => {
-          // 緯度経度 → 画面ピクセルに変換して、形の入る矩形を求める
-          const pts = ring.map(([lng, lat]: [number, number]) =>
-            map.convertCoordinateToPointOnPage(
-              new window.mapkit.Coordinate(lat, lng)
-            )
-          );
-          const xs = pts.map((p: any) => p.x);
-          const ys = pts.map((p: any) => p.y);
-          const minX = Math.min(...xs);
-          const maxX = Math.max(...xs);
-          const minY = Math.min(...ys);
-          const maxY = Math.max(...ys);
-          const w = Math.ceil(maxX - minX);
-          const h = Math.ceil(maxY - minY);
-          // 小さすぎ（見えない）・大きすぎ（画面を覆う異常値）はスキップ
-          if (w < 2 || h < 2 || w > 4000 || h > 4000) return;
-
-          // フタの画像をCanvasで作る（建物色で塗りつぶし）
-          const canvas = document.createElement("canvas");
-          canvas.width = w + 2;
-          canvas.height = h + 2;
-          const ctx = canvas.getContext("2d");
-          if (!ctx) return;
-          ctx.fillStyle = COVER_BUILDING_COLOR;
-          ctx.strokeStyle = COVER_BUILDING_COLOR;
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          pts.forEach((p: any, i: number) => {
-            const x = p.x - minX + 1;
-            const y = p.y - minY + 1;
-            if (i === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
-          });
-          ctx.closePath();
-          ctx.fill();
-          ctx.stroke();
-
-          // 形の中心座標にアノテーションとして置く
-          const centerCoord = map.convertPointOnPageToCoordinate(
-            new DOMPoint(minX + w / 2, minY + h / 2)
-          );
-          const ann = new window.mapkit.Annotation(
-            centerCoord,
-            () => {
-              const el = document.createElement("div");
-              el.style.pointerEvents = "none"; // タップは地図へ素通し（霧と同じ方針）
-              el.appendChild(canvas);
-              return el;
-            },
-            { enabled: false, anchorOffset: new DOMPoint(0, 0) }
-          );
-          map.addAnnotation(ann);
-          coverAnnotationsRef.current.push(ann);
+          // [lng,lat] のまま保持（描画時に画面座標へ変換する）
+          polys.push(ring.map(([lng, lat]: [number, number]) => [lng, lat]));
         });
       });
+
+      coverPolysRef.current = polys;
+      // 取得できたら霧を描き直して穴を反映
+      renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current, coverPolysRef.current);
+      applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
     } catch {
-      /* 取得失敗時は何もしない（次のパン・ズームで再試行される） */
+      /* 取得失敗時は穴なしのまま（次のパン・ズームで再試行される） */
     }
   };
-  renderCoversRef.current = renderCovers;
+  const fetchCoverPolysRef = useRef(fetchCoverPolys);
+  fetchCoverPolysRef.current = fetchCoverPolys;
   const onOutOfServiceRef = useRef(onOutOfService);
 
   // ============================================================
@@ -1532,30 +1630,29 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       //   下げるのではなく、こちらを上げること。
       // ============================================================
       const MIN_CAMERA_DISTANCE_METERS_PC = 200;
-      const MIN_CAMERA_DISTANCE_METERS_SP = 80; // スマホ用。小さいほど深く寄れる
+      const MIN_CAMERA_DISTANCE_METERS_SP = 50; // スマホ用。小さいほど深く寄れる（2026-07-20: 80→50）
       const isMobileInit = typeof window !== "undefined" && window.innerWidth < 768;
       map.cameraZoomRange = new window.mapkit.CameraZoomRange(
         isMobileInit ? MIN_CAMERA_DISTANCE_METERS_SP : MIN_CAMERA_DISTANCE_METERS_PC
       );
 
       // ============================================================
-      // ★2026-07-19 フタ対応：地図をライトモード固定にする
-      // 端末がダークモードでも地図はライト表示になる。フタの色
-      // (COVER_BUILDING_COLOR)を全端末で建物色と一致させるための措置。
-      // （ダーク地図に明るいグレーのフタが浮くのを防ぐ）
+      // ★2026-07-20 切り抜き対応：地図をライトモード固定にする
+      // 切り抜いた穴からは地図がそのまま透ける。端末がダークモードだと
+      // 穴の中だけ暗い地図が見えて不自然になるため、常にライト表示に固定。
       // ============================================================
       map.colorScheme = window.mapkit.Map.ColorSchemes.Light;
 
       map.addEventListener("region-change-end", () => {
-        renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
+        renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current, coverPolysRef.current);
         applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
-        renderCoversRef.current(map); // 🏢フタ（霧の後に描く＝霧より上）
+        fetchCoverPolysRef.current(map); // 🕳 画面内の切り抜きエリアを取得→霧に穴あけ
         renderAdminPinsRef.current(map); // 管理者モード時のみ実際に描画される
       });
 
-      renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
+      renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current, coverPolysRef.current);
       applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
-      renderCoversRef.current(map);
+      fetchCoverPolysRef.current(map);
       renderAdminPinsRef.current(map);
 
       map.addEventListener("single-tap", async (event: any) => {
@@ -1831,7 +1928,58 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
           const msg = document.createElement("p");
           msg.textContent = "ドラッグして位置を調整してください";
-          msg.style.cssText = "margin:0 0 12px;font-size:13px;color:#292524;";
+          msg.style.cssText =
+            "margin:0 0 12px;font-size:13px;color:#292524;cursor:grab;touch-action:none;user-select:none;";
+
+          // ============================================================
+          // ★2026-07-20：この白箱(メッセージ部分)をドラッグしてもピンを
+          // 動かせるようにする。🪳本体は親指で隠れて掴みにくいため、
+          // 見えている白箱でも操作できると調整しやすい、という要望対応。
+          // ボタン(キャンセル/入力)はドラッグ対象にしない(誤操作防止)。
+          // ============================================================
+          {
+            let bStartX = 0, bStartY = 0, bDragging = false;
+            const B_THRESHOLD = 6;
+            const bMove = (e: PointerEvent) => {
+              const dx = e.clientX - bStartX;
+              const dy = e.clientY - bStartY;
+              if (!bDragging && Math.hypot(dx, dy) > B_THRESHOLD) {
+                bDragging = true;
+                msg.style.cursor = "grabbing";
+                currentMap.isScrollEnabled = false;
+              }
+              if (bDragging) {
+                try {
+                  // 白箱は🪳の上に出ているので、カーソル位置そのままだと
+                  // ピンが指のかなり上に来てしまう。見た目の自然さのため、
+                  // カーソルの少し下(40px)をピン位置にする。
+                  const domPoint = new DOMPoint(e.pageX, e.pageY + 40);
+                  annotation.coordinate = currentMap.convertPointOnPageToCoordinate(domPoint);
+                } catch (err) {
+                  console.error("白箱ドラッグ時の座標変換に失敗:", err);
+                }
+              }
+            };
+            const bUp = () => {
+              window.removeEventListener("pointermove", bMove);
+              window.removeEventListener("pointerup", bUp);
+              msg.style.cursor = "grab";
+              currentMap.isScrollEnabled = true;
+              if (bDragging && reportPosRef.current) {
+                reportPosRef.current.lat = annotation.coordinate.latitude;
+                reportPosRef.current.lng = annotation.coordinate.longitude;
+              }
+              bDragging = false;
+            };
+            msg.addEventListener("pointerdown", (e: PointerEvent) => {
+              e.preventDefault();
+              e.stopPropagation();
+              bStartX = e.clientX;
+              bStartY = e.clientY;
+              window.addEventListener("pointermove", bMove);
+              window.addEventListener("pointerup", bUp);
+            });
+          }
           container.appendChild(msg);
 
           const cancelBtn = document.createElement("button");
