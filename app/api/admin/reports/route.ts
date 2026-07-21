@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
     const { data, error } = await supabase
       .from("reports")
       .select(
-        "id, created_at, occurred_on, lat, lng, nearby_count, checked, hidden, report_details(address, detail)"
+        "id, created_at, occurred_on, lat, lng, nearby_count, checked, report_details(address, detail)"
       )
       .gte("lat", nLatMin)
       .lte("lat", nLatMax)
@@ -95,25 +95,17 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
   const id = Number(body?.id);
-  if (!Number.isInteger(id) || id <= 0) {
-    return NextResponse.json({ error: "invalid_id" }, { status: 400 });
-  }
-
-  // checked（既読）／hidden（霧だけ消す）のどちらか、または両方を更新
-  const patch: { checked?: boolean; hidden?: boolean } = {};
-  if (typeof body?.checked === "boolean") patch.checked = body.checked;
-  if (typeof body?.hidden === "boolean") patch.hidden = body.hidden;
-  if (Object.keys(patch).length === 0) {
-    return NextResponse.json({ error: "no_fields" }, { status: 400 });
+  if (!Number.isInteger(id) || id <= 0 || typeof body?.checked !== "boolean") {
+    return NextResponse.json({ error: "invalid_params" }, { status: 400 });
   }
 
   const supabase = getServiceClient();
   const { error } = await supabase
     .from("reports")
-    .update(patch)
+    .update({ checked: body.checked })
     .eq("id", id);
   if (error) {
-    console.error("投稿の更新に失敗:", error);
+    console.error("チェック状態の更新に失敗:", error);
     return NextResponse.json({ error: "internal_error" }, { status: 500 });
   }
   return NextResponse.json({ ok: true });
