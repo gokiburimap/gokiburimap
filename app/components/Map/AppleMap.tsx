@@ -348,11 +348,19 @@ const createClusterIconUrl = (count: number, size: number) => {
 };
 
 const clusterIconCache = new Map<string, string>();
+const CLUSTER_CACHE_MAX = 400;
+const CLUSTER_SIZE_QUANTUM = 4;
 function getCachedClusterIconUrl(count: number, size: number) {
-  const key = `c_${count}_${size}`;
+  // 霧と同じく、ズームで連続変化するsizeを刻みに丸めて蓄積を防ぐ
+  const qSize = Math.max(CLUSTER_SIZE_QUANTUM, Math.round(size / CLUSTER_SIZE_QUANTUM) * CLUSTER_SIZE_QUANTUM);
+  const key = `c_${count}_${qSize}`;
   let icon = clusterIconCache.get(key);
   if (!icon) {
-    icon = createClusterIconUrl(count, size);
+    icon = createClusterIconUrl(count, qSize);
+    if (clusterIconCache.size >= CLUSTER_CACHE_MAX) {
+      const oldestKey = clusterIconCache.keys().next().value;
+      if (oldestKey !== undefined) clusterIconCache.delete(oldestKey);
+    }
     clusterIconCache.set(key, icon);
   }
   return icon;
@@ -508,14 +516,42 @@ function createCloudIconUrl(count: number, colorCount: number, size: number, see
   return canvas.toDataURL();
 }
 
+// ============================================================
+// 霧画像のキャッシュ（2026-07-20 固まりバグの根本修正）
+//
+// 【症状】霧のある場所でピンチ(ズーム)を繰り返すと、そのうち地図が
+// 固まり、スライドしてもズームしかできなくなる。
+//
+// 【原因】ピンチのズームは滑らかで、霧のsizeが 100,101,102… と1pxずつ
+// 無数の値を取る。旧実装はキャッシュキーにsizeをそのまま使っていたため、
+// 1pxごとに別画像を生成し、それが cloudIconCache に無限に溜まり続けて
+// メモリを圧迫し、最後に固まっていた。移動(パン)ではsizeが変わらないので
+// 溜まらず、ピンチのときだけ起きていた。
+//
+// 【対策1】sizeを SIZE_QUANTUM(px)刻みに丸める。連続ズームでも同じキーに
+// 集約され、画像生成が激減する（見た目はほぼ変わらない）。
+// 【対策2】キャッシュに上限(CACHE_MAX)を設け、超えたら古いものから捨てる。
+// 無限蓄積を根本で止める。
+// ============================================================
 const cloudIconCache = new Map<string, string>();
+const CLOUD_CACHE_MAX = 400;   // 保持する霧画像の最大数
+const SIZE_QUANTUM = 8;        // 霧サイズをこのpx刻みに丸める
+
 function getCachedCloudIconUrl(count: number, colorCount: number, size: number, seed: number) {
+  // サイズを刻みに丸める（ピンチの連続値を段階に集約してキャッシュを効かせる）
+  const qSize = Math.max(SIZE_QUANTUM, Math.round(size / SIZE_QUANTUM) * SIZE_QUANTUM);
+
   // ★キャッシュキーにcolorCountも含める。同じ件数・サイズ・形でも
   //   色が違えば別の画像なので、混ざらないようにする
-  const key = `cloud_${count}_${colorCount}_${size}_${seed}`;
+  const key = `cloud_${count}_${colorCount}_${qSize}_${seed}`;
   let icon = cloudIconCache.get(key);
   if (!icon) {
-    icon = createCloudIconUrl(count, colorCount, size, seed);
+    icon = createCloudIconUrl(count, colorCount, qSize, seed);
+    // 上限を超えたら、最も古いエントリ(Mapは挿入順)から捨てる
+    if (cloudIconCache.size >= CLOUD_CACHE_MAX) {
+      const oldestKey = cloudIconCache.keys().next().value;
+      if (oldestKey !== undefined) cloudIconCache.delete(oldestKey);
+    }
     cloudIconCache.set(key, icon);
   }
   return icon;
