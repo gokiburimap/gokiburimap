@@ -1437,10 +1437,57 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       );
 
 
-      map.addEventListener("region-change-end", () => {
+      // ============================================================
+      // 🖐 ジェスチャー中は霧を描き直さない（2026-07-20 固まりバグ根本修正）
+      //
+      // 【症状】霧の上でピンチを繰り返すと固まり、以後「1本指スライドが
+      // ズームになる」「2本指ピンチが無反応」になる。
+      //
+      // 【原因】ピンチの最中にも region-change-end が発火することがあり、
+      // そのたび renderMarkers が「指が今触れている霧のDOM要素」を
+      // removeAnnotation で消して作り直していた。iOSのSafariでは、
+      // タッチが始まった要素が指を離す前に消されると touchend が届かなく
+      // なる。その結果 MapKit が「指がまだ1本残っている」と誤認し続け、
+      // 以後の1本指操作を「2本目の指」と解釈してピンチ扱いにする
+      // （＝幻の指。1本指スライドでズームする症状と完全に一致する）。
+      //
+      // 【対策】指が1本でも画面に触れている間は霧の描き直しを保留し、
+      // 全ての指が離れた瞬間に実行する。指の下から要素を消さないので
+      // touchend が確実に届き、誤認が起きない。
+      // PCはタッチイベントが無いので従来と全く同じ動作。
+      // ============================================================
+      let activeTouches = 0;
+      let pendingRender = false;
+      const doRender = () => {
         renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
         applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
         renderAdminPinsRef.current(map); // 管理者モード時のみ実際に描画される
+      };
+      const touchTarget = mapContainerRef.current;
+      if (touchTarget) {
+        const onTouch = (e: TouchEvent) => {
+          activeTouches = e.touches.length;
+        };
+        const onTouchEnd = (e: TouchEvent) => {
+          activeTouches = e.touches.length;
+          if (activeTouches === 0 && pendingRender) {
+            pendingRender = false;
+            doRender();
+          }
+        };
+        touchTarget.addEventListener("touchstart", onTouch, { passive: true });
+        touchTarget.addEventListener("touchmove", onTouch, { passive: true });
+        touchTarget.addEventListener("touchend", onTouchEnd, { passive: true });
+        touchTarget.addEventListener("touchcancel", onTouchEnd, { passive: true });
+      }
+
+      map.addEventListener("region-change-end", () => {
+        if (activeTouches > 0) {
+          // 指がまだ触れている：描き直しは全部の指が離れてから
+          pendingRender = true;
+          return;
+        }
+        doRender();
       });
 
       renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
