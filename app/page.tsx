@@ -71,6 +71,34 @@ export default function Home() {
   }, []);
 
   // ============================================================
+  // 🛑 Safariの「ページごと拡大」ピンチを無効化（2026-07-20 最重要修正）
+  //
+  // iPhoneのSafariは、viewportで拡大禁止を指定しても【無視して】
+  // ページ拡大のピンチを受け付ける（iOSのアクセシビリティ仕様）。
+  // 指が凡例・Gボタン・ヘッダー等、地図以外の要素に少しでもかかった
+  // ピンチをSafariが「ページ拡大」として横取りすると、その瞬間に
+  // 地図へのタッチ通知が打ち切られ、MapKitの指の帳簿が狂う。
+  // → 幻の指が残り「1本指なぞりでズームする」「2本指が無反応」
+  //   「タップが効かない」という一連の壊れ方の根本原因だった。
+  //   （ヘッダーを掴むと画面全体が拡大する、という以前の報告が
+  //     このページ拡大が生きている動かぬ証拠だった）
+  //
+  // Safari独自の gesturestart / gesturechange をpreventDefaultすると、
+  // ページ拡大だけが無効になる。地図自身のピンチ(MapKitのズーム)は
+  // タッチイベントで別処理なので、従来通り動く。
+  // 大島てる等の地図サイトが壊れないのは、これをやっているから。
+  // ============================================================
+  useEffect(() => {
+    const prevent = (e: Event) => e.preventDefault();
+    document.addEventListener("gesturestart", prevent, { passive: false } as AddEventListenerOptions);
+    document.addEventListener("gesturechange", prevent, { passive: false } as AddEventListenerOptions);
+    return () => {
+      document.removeEventListener("gesturestart", prevent);
+      document.removeEventListener("gesturechange", prevent);
+    };
+  }, []);
+
+  // ============================================================
   // 🪳 投稿直後の確認ピン（2026-07-18 追加）
   //
   // 投稿が成功したときだけ、ここに投稿内容が入る。
