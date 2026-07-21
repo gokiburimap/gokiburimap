@@ -1272,13 +1272,21 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
             div.style.display = "inline-block";
             div.style.lineHeight = "1";
             div.style.fontSize = "24px";
-            div.style.cursor = "pointer";
             div.style.filter = "drop-shadow(0 1px 2px rgba(0,0,0,0.4))";
             div.textContent = "📍";
+            // ★2026-07-20：📍も触覚ゼロにする。タッチに反応する物体の上で
+            //   ピンチするとMapKitのタッチ帳簿が狂う問題の、最後の残存箇所。
+            //   タップ判定は地図側single-tapの自前判定で行う（円と同方式）。
+            div.style.pointerEvents = "none";
+            div.style.userSelect = "none";
+            (div.style as any).webkitUserSelect = "none";
+            (div.style as any).webkitTouchCallout = "none";
             return div;
           },
           { calloutEnabled: true, calloutOffset: new DOMPoint(0, 6) }
         );
+        // 自前タップ判定用（画面上の当たり半径18px＝押しやすさ優先）
+        (ann as any).__adminHit = { lat: r.lat, lng: r.lng, radiusPx: 18 };
         ann.callout = {
           calloutElementForAnnotation: () => buildAdminPinCallout(r, map, ann),
         };
@@ -1526,6 +1534,25 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         // ============================================================
         if (!isSelectingRef.current && !reportPosRef.current) {
           const tapPt = event.pointOnPage;
+
+          // 📍管理者ピンのタップ判定（ピンも触覚ゼロ化したため自前判定。
+          // 　視覚的に最前面なので、円より先に判定する）
+          for (const pin of adminPinsRef.current) {
+            const h = (pin as any)?.__adminHit;
+            if (!h) continue;
+            try {
+              const p = map.convertCoordinateToPointOnPage(
+                new window.mapkit.Coordinate(h.lat, h.lng)
+              );
+              if (Math.hypot(tapPt.x - p.x, tapPt.y - p.y) <= h.radiusPx) {
+                pin.selected = true; // プログラム側から選択→吹き出し(削除ボタン)が開く
+                return;
+              }
+            } catch {
+              /* 座標変換に失敗したピンはスキップ */
+            }
+          }
+
           for (const ann of markersRef.current) {
             const t = (ann as any)?.__tapExpand;
             if (!t) continue; // 霧には__tapExpandが無い＝展開対象外
