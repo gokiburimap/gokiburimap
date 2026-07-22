@@ -1083,8 +1083,6 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   const clusterIndexRef = useRef<Supercluster | null>(null);
   // 描き直しの入口（reports変更時などはこの参照を通して描き直す）
   const requestRenderRef = useRef<() => void>(() => {});
-  // ズームリセットのタッチ監視を、アンマウント時に解除するための参照
-  const touchCleanupRef = useRef<() => void>(() => {});
   const [reports, setReports] = useState<Report[]>([]);
 
   // ============================================================
@@ -1560,7 +1558,6 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
     return () => {
       cancelled = true;
-      touchCleanupRef.current(); // タッチ監視の後始末（現状は未使用・無害）
       if (mapRef.current) {
         mapRef.current.destroy();
         mapRef.current = null;
