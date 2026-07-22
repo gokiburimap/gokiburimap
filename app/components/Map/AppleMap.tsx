@@ -348,7 +348,7 @@ const createClusterIconUrl = (count: number, size: number) => {
 };
 
 const clusterIconCache = new Map<string, string>();
-const CLUSTER_CACHE_MAX = 800;
+const CLUSTER_CACHE_MAX = 150;
 const CLUSTER_SIZE_QUANTUM = 4;
 function getCachedClusterIconUrl(count: number, size: number) {
   // 霧と同じく、ズームで連続変化するsizeを刻みに丸めて蓄積を防ぐ
@@ -534,8 +534,8 @@ function createCloudIconUrl(count: number, colorCount: number, size: number, see
 // 無限蓄積を根本で止める。
 // ============================================================
 const cloudIconCache = new Map<string, string>();
-const CLOUD_CACHE_MAX = 1500;  // 保持する霧画像の最大数(2026-07-22: 150→1500。凍結撤去で描き直しが増え、150ではキャッシュがあふれて再生成が止まらず固まったため大幅拡大。画像1枚数十KBなので1500枚でも数十MBで問題なし)
-const SIZE_QUANTUM = 16;       // 霧サイズをこのpx刻みに丸める(2026-07-22: 8→16。刻みを粗くするとサイズ違いの画像が減り、キャッシュがヒットしやすくなって再生成が半減。見た目の差はほぼ無し)
+const CLOUD_CACHE_MAX = 150;   // 保持する霧画像の最大数
+const SIZE_QUANTUM = 8;        // 霧サイズをこのpx刻みに丸める
 
 function getCachedCloudIconUrl(count: number, colorCount: number, size: number, seed: number) {
   // サイズを刻みに丸める（ピンチの連続値を段階に集約してキャッシュを効かせる）
@@ -1519,23 +1519,14 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       });
 
       // ============================================================
-      // 🩹 地図イベント復活（2026-07-22・本丸修正）
+      // 🖐 ズームリセット（1本指ズームのバグ対策・実機で多数回無事を確認した版）
       //
-      // 【本質】iPhoneのMapKitがピンチ終了を取りこぼすと、地図が「まだ
-      // 操作中」と思い込み、region-change-end(動き終わりの合図)を二度と
-      // 出さなくなる。霧の描き直しもゴキブリアイコン復帰もタップ処理も、
-      // 全てこの合図で走るため、合図が止まると全部固まる。
-      // ＝「霧が固まる」の正体は「地図のイベントが止まる」ことだった。
+      // 指が全部離れた瞬間に isZoomEnabled を false→true する。これで
+      // MapKitが握っていたジェスチャー状態がリセットされ、iPhoneで起きる
+      // 「1本指スライドがズームに化ける」バグが出なくなる（実機確認済み）。
       //
-      // 【修正】指が全部離れた瞬間、地図の現在位置を同じ値で "アニメーション
-      // あり" で1回セットする。アニmeーションありにすると、MapKitは必ず
-      // 新しいカメラ移動として扱い、その完了時に region-change-end を必ず
-      // 発火する。＝止まっていた合図を、我々が強制的に1回叩き出す。
-      // 位置は同じなので画面はほぼ動かない。
-      //
-      // ※前回「アニメーション無し」では、MapKitが内部だけ変えてイベントを
-      //   出さず効かなかった。"あり" が効く鍵。
-      // ※isZoomEnabledには触らない（あれはイベント機構自体を壊すため）。
+      // ※isScrollEnabledは触らない（触ると慣性スクロールが死んで
+      //   移動がカクつくため。ズームだけリセットすれば対策として足りる）。
       // ============================================================
       let fingersDown = 0;
       const onTouchG = (e: TouchEvent) => {
@@ -1543,12 +1534,10 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         fingersDown = e.touches.length;
         if (before > 0 && fingersDown === 0) {
           try {
-            const c = map.center;
-            // 同じ位置へアニメーション付きで移動 → 完了時にregion-change-end発火
-            map.setCenterAnimated(
-              new window.mapkit.Coordinate(c.latitude, c.longitude),
-              true
-            );
+            map.isZoomEnabled = false;
+            requestAnimationFrame(() => {
+              try { map.isZoomEnabled = true; } catch { /* noop */ }
+            });
           } catch { /* noop */ }
         }
       };
