@@ -1083,13 +1083,6 @@ function renderMarkers(
 
   map.addAnnotations(finalAnnotations);
   markersRef.current = finalAnnotations;
-
-  // 🔬 デバッグHUD用：描画回数・マーカー数・霧キャッシュ枚数を公開
-  const st = ((window as any).__renderStats = (window as any).__renderStats || { count: 0 });
-  st.count += 1;
-  st.markers = finalAnnotations.length;
-  st.cloudCache = cloudIconCache.size;
-  st.clusterCache = clusterIconCache.size;
 }
 
 const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
@@ -1456,8 +1449,6 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       });
 
       mapRef.current = map;
-      // 🔬 デバッグHUDが地図のspan(ズーム状態)を読めるように公開（原因究明用）
-      (window as any).__mapForDebug = map;
 
       // ============================================================
       // 🛡【②ズームの深さの上限はここ】法的リスク対策
@@ -1484,121 +1475,76 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       );
 
 
-      // ============================================================
-      // 🧪 検証版（2026-07-22 全部剥がし）
-      //
-      // 幻の指対策の機械一式（ズームリセット・レースガード・指本数監視）を
-      // すべて撤去した。ブラウザ層の幻の指はHUD観測で存在しないと証明済み。
-      // 「MapKit内部の幻の指」は推論であり、その対策(ズームリセット)自身が
-      // 霧固まり(region-change-end停止)の容疑者になったため、一度ゼロにして
-      // 切り分ける。残すのは実証済みの2つだけ：
-      //   ・ページ拡大の無効化(page.tsxのgesturestart対策)
-      //   ・touchAction:none(タップ・ダブルタップでのページズーム防止)
-      //
-      // あわせて、renderMarkersが途中で例外死して描画回数が止まる仮説を
-      // 検証するため、doRenderをtry/catchで包みエラーをHUDに記録する
-      // (挙動は変えない。観測のみ)。
-      // ============================================================
       const doRender = () => {
-        try {
-          renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
-          applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
-          renderAdminPinsRef.current(map); // 管理者モード時のみ実際に描画される
-        } catch (err) {
-          const st = ((window as any).__renderStats =
-            (window as any).__renderStats || { count: 0 });
-          st.errors = (st.errors || 0) + 1;
-          st.lastError =
-            err instanceof Error ? err.message.slice(0, 60) : String(err).slice(0, 60);
-        }
+        renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
+        applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
+        renderAdminPinsRef.current(map); // 管理者モード時のみ実際に描画される
       };
       requestRenderRef.current = doRender;
 
       // ============================================================
-      // 🖐 ズームリセット（1本指対策）＋ 描き直しの多重入口（2026-07-22）
+      // 🖐 1本指ズーム対策・isZoomEnabledを使わない版（2026-07-22 最終方針）
       //
-      // 【2つのバグと、その板挟み】
-      // ・1本指ズーム対策として isZoomEnabled の false→true リセットが要る。
-      // ・しかしリセットはMapKitの収束を乱し、region-change-end(霧・アイコンを
-      //   描き直す入口)を飛ばすことがある。飛ぶと霧/アイコンが固まる。
+      // 【確定事実】isZoomEnabled の false→true リセットは、1本指ズームは
+      // 直すが必ず地図の収束を壊し region-change-end を飛ばして霧を固まらせる。
+      // 何通りタイミングを変えても両立しなかった。→ isZoomEnabled は一切使わない。
       //
-      // 【今日までの失敗】「region-change-endを飛ばさない」ようリセットの
-      // タイミングを何度も変えたが、地図設定に触る以上いつか収束と衝突し、
-      // 飛びを完全には防げなかった。
+      // 【新方式】地図の設定に触らず、1本指ズームが「起きた瞬間」に補正する。
+      // ・指1本で触れている最中に、ズーム率(span)が動いたら＝1本指ズームの発生。
+      // ・その瞬間、span を直前の正しい値へ setRegion で戻す（＝化けたズームを
+      //   取り消す）。中心は今の位置のまま。アニメーション無しなので即時。
+      // ・isZoomEnabled に触らないので収束は壊れず、霧は固まらない。
       //
-      // 【方針転換】region-change-endが「飛んでも困らない」ようにする。
-      // 描き直しの入口を1つに頼らず、複数用意する：
-      //   (1) region-change-end（従来どおり・静止時）
-      //   (2) region-change-start（動き始め。ここでも描けば、endが飛んでも
-      //       次の操作の開始時に必ず追いつく＝固まったまま放置されない）
-      //   (3) 指を離した後の時間差ポーリング（数回、span変化を見て描き直す。
-      //       地図設定には一切触らず、ただ描くだけ＝収束を壊さない安全な保険）
-      // どれか1つが飛んでも、他が霧を最新化する。固まりの根を断つ。
-      // 1本指対策のリセットは「静止後に1回」の今の形を維持する。
+      // 描き直しは region-change-end のみ（シンプルに戻す）。
       // ============================================================
       let fingersDown = 0;
-      let resetArmed = false;
-      let lastRenderedSpan = 0;
+      let spanWhenOneFinger = 0;
+      let centerWhenOneFinger: any = null;
 
-      const renderNow = () => {
-        doRender();
-        try { lastRenderedSpan = map.region.span.latitudeDelta; } catch { /* noop */ }
-      };
-
-      // (1) 静止時：描き直し＋（予約されていれば）静止後リセット
       map.addEventListener("region-change-end", () => {
-        renderNow();
-        if (resetArmed && fingersDown === 0) {
-          resetArmed = false;
-          try {
-            map.isZoomEnabled = false;
-            requestAnimationFrame(() => {
-              try { map.isZoomEnabled = true; } catch { /* noop */ }
-            });
-          } catch { /* noop */ }
-        }
+        doRender();
       });
 
-      // (2) 動き始め：ここでも描く。前回のend が飛んでいても、次の操作開始で
-      //     必ず最新サイズに追いつくため、固まったまま残らない。
-      map.addEventListener("region-change-start", () => {
-        renderNow();
-      });
-
-      // (3) 指を離した後のポーリング保険：地図設定に触らず、span が
-      //     描画済みの値からズレていたら描き直すだけ。収束を壊さない。
-      const pollAfterTouch = () => {
-        let tries = 0;
-        const tick = () => {
-          tries += 1;
-          try {
-            const span = map.region.span.latitudeDelta;
-            if (lastRenderedSpan > 0 &&
-                Math.abs(span - lastRenderedSpan) / lastRenderedSpan > 0.02) {
-              renderNow(); // 取り残されていた → 追いつかせる
-            }
-          } catch { /* noop */ }
-          if (tries < 6 && fingersDown === 0) setTimeout(tick, 180); // 最大約1秒
-        };
-        setTimeout(tick, 180);
+      const readSpan = () => {
+        try { return map.region.span.latitudeDelta as number; } catch { return 0; }
       };
 
       const onTouchG = (e: TouchEvent) => {
         const before = fingersDown;
         fingersDown = e.touches.length;
-        if (before > 0 && fingersDown === 0) {
-          resetArmed = true;   // 静止後リセットを予約（1本指対策）
-          pollAfterTouch();    // 描き直しの取りこぼしを拾う保険を起動
+        if (fingersDown === 1 && before !== 1) {
+          // 指がちょうど1本になった：その時点の正しいズーム率と中心を記録
+          spanWhenOneFinger = readSpan();
+          try { centerWhenOneFinger = map.center; } catch { centerWhenOneFinger = null; }
+        }
+      };
+      const onMoveG = () => {
+        if (fingersDown !== 1 || spanWhenOneFinger <= 0) return;
+        const nowSpan = readSpan();
+        // 1本指なのにズーム率が3%以上変わった＝1本指ズーム発生 → その場で戻す
+        if (Math.abs(nowSpan - spanWhenOneFinger) / spanWhenOneFinger > 0.03) {
+          try {
+            const c = map.center; // 移動ぶんは活かし、ズーム率だけ戻す
+            map.setRegionAnimated(
+              new window.mapkit.CoordinateRegion(
+                new window.mapkit.Coordinate(c.latitude, c.longitude),
+                new window.mapkit.CoordinateSpan(spanWhenOneFinger, spanWhenOneFinger)
+              ),
+              false // アニメーション無し＝即座にズーム率を戻す
+            );
+          } catch { /* noop */ }
         }
       };
       const gOpt = { capture: true, passive: true } as AddEventListenerOptions;
       document.addEventListener("touchstart", onTouchG, gOpt);
       document.addEventListener("touchend", onTouchG, gOpt);
       document.addEventListener("touchcancel", onTouchG, gOpt);
+      document.addEventListener("touchmove", onMoveG, gOpt);
       touchCleanupRef.current = () => {
         document.removeEventListener("touchstart", onTouchG, gOpt);
         document.removeEventListener("touchend", onTouchG, gOpt);
         document.removeEventListener("touchcancel", onTouchG, gOpt);
+        document.removeEventListener("touchmove", onMoveG, gOpt);
       };
 
 
