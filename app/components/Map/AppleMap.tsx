@@ -1456,9 +1456,17 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
 
       const doRender = () => {
+        // 🧪【最終切り分けテスト 2026-07-22】
+        // region-change-endのたびの「全マーカー削除→全再生成→再登録」が
+        // 固まりの原因か検証するため、doRenderを一時的に空にする。
+        // 最初の描画で乗ったマーカーはそのまま残る（消さない・作り直さない）。
+        // ・これで固まらない → 犯人は「毎回の全作り直し」。デバウンスで直る。
+        // ・これでも固まる → アノテーションが乗っていること自体が原因。大改修へ。
+        return;
+        // eslint-disable-next-line no-unreachable
         renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
         applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
-        renderAdminPinsRef.current(map); // 管理者モード時のみ実際に描画される
+        renderAdminPinsRef.current(map);
       };
       requestRenderRef.current = doRender;
 
@@ -1570,8 +1578,10 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     );
 
     if (!mapRef.current) return;
-    // 🖐 指が触れている最中なら凍結（離れてから描き直す）。ジェスチャー破壊防止。
-    requestRenderRef.current();
+    // 🧪 テスト中：doRenderは空にしてあるが、reports到着時の初回描画だけは
+    //    直接呼んで霧を1度表示する（そのあとのピンチでは作り直さない）。
+    renderMarkers(mapRef.current, markersRef, clusterIndexRef, mapContainerRef.current);
+    applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
   }, [reports]);
 
   // isSelecting・reportPosが変化した瞬間にも、既存の霧アノテーションの
