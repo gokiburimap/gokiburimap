@@ -1519,40 +1519,21 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       });
 
       // ============================================================
-      // 🧹 ズームリセット復活・窓ゼロ版（2026-07-22）
+      // 🧭 幻の指対策は一旦「無し」にする（2026-07-22 切り分け）
       //
-      // 【A/Bテストで確定した事実】
-      // ・リセットあり → 幻の指バグは出ない(実機で多数回確認)が、霧が固まる
-      // ・リセットなし → 固まりは消えるが、幻の指バグが復活(実機確認)
-      // ＝リセットは必要。ただし旧実装の「false→次フレームでtrue」の
-      //   16msの無効窓に次のピンチが割り込むと、region-change-endを発しない
-      //   ジェスチャーが生まれ、霧固まりを起こしていた(外部指摘と観測が一致)。
+      // 【判明した事実】isZoomEnabled を false→true するリセットは、
+      // 幻の指は直すが、その操作自体がMapKitのイベント発火機構を壊す。
+      // 結果、region-change-end も single-tap も発火しなくなり、
+      // 「霧が固まる・アイコンが出ない・投稿タップも効かない・移動が重い」
+      // という全イベント停止を招いていた（エラー=0＝クラッシュではなく
+      // イベントが呼ばれていない、という観測と一致）。同期化しても
+      // 直らなかった＝窓の問題ではなく、セッターに触ること自体が原因。
       //
-      // 【今回】falseにした直後、同じ瞬間に同期でtrueへ戻す。窓は0ms。
-      // 割り込まれる隙間が構造的に存在しないため、固まりの発生条件が消える。
-      // MapKitのセッター副作用でタッチ帳簿の破棄は同期実行されるため、
-      // 幻の指の掃除効果は維持される想定。効かなければ次の手に進む。
+      // よって isZoomEnabled いじりは全撤去。これで地図は固まらない
+      // （投稿・ズーム・パン全て生きる）。幻の指は一旦戻るが、次段階で
+      // セッターに触らない別手段（touchend合成など）で対策する。
       // ============================================================
-      let fingersDown = 0;
-      const onTouchChange = (e: TouchEvent) => {
-        const before = fingersDown;
-        fingersDown = e.touches.length;
-        if (before > 0 && fingersDown === 0) {
-          try {
-            map.isZoomEnabled = false;
-            map.isZoomEnabled = true; // 同一同期ブロック内で即復帰(窓ゼロ)
-          } catch { /* noop */ }
-        }
-      };
-      const tOpt = { capture: true, passive: true } as AddEventListenerOptions;
-      document.addEventListener("touchstart", onTouchChange, tOpt);
-      document.addEventListener("touchend", onTouchChange, tOpt);
-      document.addEventListener("touchcancel", onTouchChange, tOpt);
-      touchCleanupRef.current = () => {
-        document.removeEventListener("touchstart", onTouchChange, tOpt);
-        document.removeEventListener("touchend", onTouchChange, tOpt);
-        document.removeEventListener("touchcancel", onTouchChange, tOpt);
-      };
+
 
       renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
       applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
