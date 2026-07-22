@@ -55,6 +55,14 @@ function TouchDebugHUD() {
         const span = (window as any).__mapForDebug?.region?.span?.latitudeDelta;
         if (span != null) out.push(`SPAN=${Number(span).toFixed(5)}`);
 
+        // 🔬 描画回数・マーカー数・キャッシュ枚数（蓄積型固まりの検出用）
+        const rs = (window as any).__renderStats;
+        if (rs) {
+          out.push(`描画回数=${rs.count}`);
+          out.push(`マーカー数=${rs.markers}`);
+          out.push(`霧cache=${rs.cloudCache} 円cache=${rs.clusterCache}`);
+        }
+
         for (const k in im) {
           if (/gestur|pinch|drag|_isZoom|_isPan|scal/i.test(k)) {
             const v = im[k];

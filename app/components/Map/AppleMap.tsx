@@ -1083,6 +1083,13 @@ function renderMarkers(
 
   map.addAnnotations(finalAnnotations);
   markersRef.current = finalAnnotations;
+
+  // 🔬 デバッグHUD用：描画回数・マーカー数・霧キャッシュ枚数を公開
+  const st = ((window as any).__renderStats = (window as any).__renderStats || { count: 0 });
+  st.count += 1;
+  st.markers = finalAnnotations.length;
+  st.cloudCache = cloudIconCache.size;
+  st.clusterCache = clusterIconCache.size;
 }
 
 const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
