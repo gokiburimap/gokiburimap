@@ -1007,17 +1007,11 @@ function renderMarkers(
       // これで生成される画像の解像度が displaySize とぴったり一致し、
       // 後から引き伸ばされることがなくなる
       const coreSize = Math.round(displaySize / CLOUD_PADDING_RATIO);
-      // 🧪【切り分けテスト 2026-07-22】Canvas生成(toDataURL)が固まりの原因か
-      //    を検証するため、重い getCachedCloudIconUrl を一時的にバイパスし、
-      //    生成もキャッシュ計算も一切しない固定SVGに差し替える。
-      //    これで固まらなくなれば犯人はCanvas再生成の重さ（大改修不要）。
-      //    それでも固まればアノテーション方式自体の限界（大改修へ）。
-      void coreSize; void colorCount; void seed;
-      icon = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Ccircle cx='20' cy='20' r='20' fill='%23c8641e' fill-opacity='0.55'/%3E%3C/svg%3E";
+      icon = getCachedCloudIconUrl(count, colorCount, coreSize, seed);
     } else {
       displaySize = Math.min(Math.max(baseSize, minCoverageSize), MAX_CIRCLE_DISPLAY_SIZE_PX);
-      // 🧪【切り分けテスト】円も同様に固定SVGへ（Canvas生成をバイパス）
-      icon = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Ccircle cx='20' cy='20' r='18' fill='%238b2500'/%3E%3C/svg%3E";
+      // 円モードは余白なしで、そのままdisplaySizeの解像度で生成する
+      icon = getCachedClusterIconUrl(count, displaySize);
     }
 
     // ============================================================
@@ -1456,24 +1450,41 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
 
       const doRender = () => {
-        // 🧪【最終切り分けテスト 2026-07-22】
-        // region-change-endのたびの「全マーカー削除→全再生成→再登録」が
-        // 固まりの原因か検証するため、doRenderを一時的に空にする。
-        // 最初の描画で乗ったマーカーはそのまま残る（消さない・作り直さない）。
-        // ・これで固まらない → 犯人は「毎回の全作り直し」。デバウンスで直る。
-        // ・これでも固まる → アノテーションが乗っていること自体が原因。大改修へ。
-        return;
-        // eslint-disable-next-line no-unreachable
         renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
         applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
-        renderAdminPinsRef.current(map);
+        renderAdminPinsRef.current(map); // 管理者モード時のみ実際に描画される
       };
       requestRenderRef.current = doRender;
 
-      // 描き直しは region-change-end のみ。地図をいじるタッチ監視は一切持たない
-      // （引き算方針。1本指ズーム/霧固まりの発生源だった地図いじりを撤去）。
+      // ============================================================
+      // 🖐 描き直しのデバウンス（2026-07-22・固まりバグの根治）
+      //
+      // 【確定した原因】切り分けテストで、doRender（全マーカーを消して
+      // 全部作り直して登録し直す処理）を止めると1本指ズーム/固まりが完全に
+      // 消え、doRenderを走らせると再発することを実機で確認。＝原因は
+      // 「region-change-endのたびの全マーカー作り直し」。連続ピンチ中に
+      // これが高速で繰り返され、iPhoneのMapKitのジェスチャー処理を壊していた。
+      //
+      // 【根治】ピンチ・パンの連続操作中は作り直さない。操作が途切れて
+      // 一定時間(SETTLE_MS)静止してから、1回だけ作り直す。region-change-end
+      // は連続操作中に何度も飛ぶが、そのたびにタイマーを張り直すので、
+      // 実際の再生成は「手が完全に止まった後の1回」だけになる。
+      //
+      // 【副作用】操作中は霧が古いサイズのまま追従し、止めた瞬間に正しい
+      // サイズ・クラスタに再計算される。これは意図した動作。
+      // ============================================================
+      const SETTLE_MS = 220;
+      let settleTimer: ReturnType<typeof setTimeout> | null = null;
       map.addEventListener("region-change-end", () => {
-        doRender();
+        if (settleTimer) clearTimeout(settleTimer);
+        settleTimer = setTimeout(() => {
+          settleTimer = null;
+          doRender();
+        }, SETTLE_MS);
+      });
+      // 次の操作が始まったら、予約中の作り直しは取り消す（操作中は作らない）
+      map.addEventListener("region-change-start", () => {
+        if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
       });
 
       renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
@@ -1578,8 +1589,9 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     );
 
     if (!mapRef.current) return;
-    // 🧪 テスト中：doRenderは空にしてあるが、reports到着時の初回描画だけは
-    //    直接呼んで霧を1度表示する（そのあとのピンチでは作り直さない）。
+    // reports（投稿データ）が変わったら、クラスタ木を作り直して1回描画する。
+    // これはユーザー操作中ではないので即描画でよい（デバウンス対象は
+    // region-changeによる連続再描画のみ）。
     renderMarkers(mapRef.current, markersRef, clusterIndexRef, mapContainerRef.current);
     applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
   }, [reports]);
