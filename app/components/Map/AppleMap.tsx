@@ -1114,9 +1114,8 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   const justPostedMarkerRef = useRef<any>(null);
   const markersRef = useRef<any[]>([]);
   const clusterIndexRef = useRef<Supercluster | null>(null);
-  // 🖐 指が触れている間の描き直し凍結制御（2026-07-20）
+  // 描き直しの入口（reports変更時などはこの参照を通して描き直す）
   const requestRenderRef = useRef<() => void>(() => {});
-  const touchCleanupRef = useRef<() => void>(() => {});
   const [reports, setReports] = useState<Report[]>([]);
 
   // ============================================================
@@ -1484,117 +1483,37 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
 
       // ============================================================
-      // 🖐 指が触れている間は霧を描き直さない（2026-07-20 第4版・確定版）
+      // 🧪 検証版（2026-07-22 全部剥がし）
       //
-      // 【確定した原因】更地(霧なし)では何百回ピンチしても壊れず、霧の
-      // ある場所でだけ壊れることを実機で確認。＝「霧の描き直しがピンチ
-      // 動作に割り込み、MapKitのジェスチャー状態(ピンチ中フラグ)を壊す」
-      // が原因と確定。壊れると指1本のパンまでズームに化ける。
+      // 幻の指対策の機械一式（ズームリセット・レースガード・指本数監視）を
+      // すべて撤去した。ブラウザ層の幻の指はHUD観測で存在しないと証明済み。
+      // 「MapKit内部の幻の指」は推論であり、その対策(ズームリセット)自身が
+      // 霧固まり(region-change-end停止)の容疑者になったため、一度ゼロにして
+      // 切り分ける。残すのは実証済みの2つだけ：
+      //   ・ページ拡大の無効化(page.tsxのgesturestart対策)
+      //   ・touchAction:none(タップ・ダブルタップでのページズーム防止)
       //
-      // 【前回(第3版)が効かなかった理由】region-change(表示範囲の変化)は
-      // ピンチ操作の実際の開始・終了とズレる。ピンチ中に一瞬region-change
-      // が終了扱いになる隙で描き直しが割り込んでいた。
-      //
-      // 【今回の方針】region-changeを捨て、ブラウザの生タッチを capture
-      // フェーズで直接監視する（デバッグHUDでこの拾い方が確実に効くことは
-      // 実証済み）。指が1本でも触れている間は描き直しを完全凍結し、
-      // 全ての指が離れて0になった瞬間に、保留していた描き直しを実行する。
-      // これで「指が触れている最中のアノテーション操作」が物理的にゼロに
-      // なり、ジェスチャー状態が壊れる隙が消える。
-      // ============================================================
-      // 🖐 霧の描き直し（2026-07-22 凍結を撤去してシンプル化）
-      //
-      // 【経緯】以前は「指が触れている間は描き直さない」凍結を入れていたが、
-      // WebKitのtouchend取りこぼしで凍結が解けず、霧が固まる不具合を起こした。
-      // そして幻の指バグは、凍結ではなく後述のズームリセットだけで直ることが
-      // 実機テストで判明した。よって凍結は撤去し、描き直しは常に即実行に戻す。
-      // 固まりの原因（凍結の解除漏れ）が構造ごと消える。
+      // あわせて、renderMarkersが途中で例外死して描画回数が止まる仮説を
+      // 検証するため、doRenderをtry/catchで包みエラーをHUDに記録する
+      // (挙動は変えない。観測のみ)。
       // ============================================================
       const doRender = () => {
-        renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
-        applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
-        renderAdminPinsRef.current(map); // 管理者モード時のみ実際に描画される
-      };
-
-      let fingersDown = 0;
-      const requestRender = () => {
-        doRender(); // 凍結せず常に即描き直す
-      };
-      requestRenderRef.current = requestRender;
-
-      const onTouchChange = (e: TouchEvent) => {
-        const before = fingersDown;
-        fingersDown = e.touches.length;
-
-        // ============================================================
-        // 🛡 レース対策（2026-07-22・外部エンジニア指摘による修正）
-        //
-        // 下のズームリセットには「false → 次フレームでtrue」の間に
-        // 約16msの無効窓がある。高速でピンチを連打すると、この窓の間に
-        // 次のピンチの touchstart が割り込み、MapKitが「ズーム無効のまま
-        // ジェスチャー開始」する。するとそのジェスチャーはズームは効くが
-        // 正規のセッションとして扱われず、region-change-end を発しない。
-        // → 霧の描き直しが二度と走らない（霧固定・アイコンが出ない・
-        //    描画回数が止まる・移動が重い）という固まりの正体。
-        //
-        // このリスナーは capture 段で、MapKitより先に必ず実行される
-        // （実機HUDで実証済み）。新しい指が触れた瞬間、MapKitがその
-        // タッチを処理する前に同期的にズームを有効へ戻し、窓を閉じる。
-        // ============================================================
-        if (fingersDown > 0) {
-          try {
-            if (map.isZoomEnabled === false) map.isZoomEnabled = true;
-          } catch { /* noop */ }
-        }
-
-        // ============================================================
-        // 🧹 WebKit(iPhone)のtouchend取りこぼし対策（2026-07-22 確定対策）
-        //
-        // 【確定した原因】
-        // ・バグ時もMapKit内部状態は正常（実機スクショで確認）
-        // ・Androidでは起きず、iPhoneでだけ起きる（＝WebKit由来で確定）
-        // → WebKitが指の離脱(touchend)を取りこぼし、MapKitが離れた指を
-        //   「まだ触れている」と握り続ける。結果、指1本のパンが2本指
-        //   ピンチと誤認されズームに化ける（内部状態は矛盾しないので正常に見える）。
-        //
-        // 【対策】ブラウザのtouchendは capture フェーズで確実に拾える
-        // （HUDで実証済み）。指が0本になった瞬間に、地図のズーム/スクロールを
-        // 一瞬オフ→オンして、MapKitが握っているジェスチャー状態を強制的に
-        // 破棄させる。これでWebKitの取りこぼしを我々が埋め、幻の指を消す。
-        // Androidでも無害（元々取りこぼさないので、単に何も壊れない）。
-        // ============================================================
-        if (before > 0 && fingersDown === 0) {
-          try {
-            // ★2026-07-22 修正：リセットするのはズームだけ。
-            //   スクロール(パン)まで一瞬オフにすると、指を離した後の
-            //   慣性スクロール(スーッと流れる滑らかさ)が断ち切られて
-            //   動きがカクつくため。幻の指問題はズーム側で起きるので、
-            //   ズームだけリセットすれば対策として十分。
-            map.isZoomEnabled = false;
-            requestAnimationFrame(() => {
-              try {
-                map.isZoomEnabled = true;
-              } catch { /* noop */ }
-            });
-          } catch { /* noop */ }
+        try {
+          renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
+          applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
+          renderAdminPinsRef.current(map); // 管理者モード時のみ実際に描画される
+        } catch (err) {
+          const st = ((window as any).__renderStats =
+            (window as any).__renderStats || { count: 0 });
+          st.errors = (st.errors || 0) + 1;
+          st.lastError =
+            err instanceof Error ? err.message.slice(0, 60) : String(err).slice(0, 60);
         }
       };
-      const tOpt = { capture: true, passive: true } as AddEventListenerOptions;
-      document.addEventListener("touchstart", onTouchChange, tOpt);
-      document.addEventListener("touchmove", onTouchChange, tOpt);
-      document.addEventListener("touchend", onTouchChange, tOpt);
-      document.addEventListener("touchcancel", onTouchChange, tOpt);
-      touchCleanupRef.current = () => {
-        document.removeEventListener("touchstart", onTouchChange, tOpt);
-        document.removeEventListener("touchmove", onTouchChange, tOpt);
-        document.removeEventListener("touchend", onTouchChange, tOpt);
-        document.removeEventListener("touchcancel", onTouchChange, tOpt);
-      };
+      requestRenderRef.current = doRender;
 
-      // 地図の表示範囲が変わったら「描き直したい」と要求する（実行するか
-      // 保留するかは requestRender が指の状態を見て決める）
       map.addEventListener("region-change-end", () => {
-        requestRender();
+        doRender();
       });
 
       renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
@@ -1678,7 +1597,6 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
     return () => {
       cancelled = true;
-      touchCleanupRef.current(); // 🖐 生タッチ監視を解除
       if (mapRef.current) {
         mapRef.current.destroy();
         mapRef.current = null;

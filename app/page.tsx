@@ -61,6 +61,7 @@ function TouchDebugHUD() {
           out.push(`描画回数=${rs.count}`);
           out.push(`マーカー数=${rs.markers}`);
           out.push(`霧cache=${rs.cloudCache} 円cache=${rs.clusterCache}`);
+          out.push(`エラー=${rs.errors || 0} ${rs.lastError || ""}`);
         }
 
         for (const k in im) {
