@@ -207,7 +207,15 @@ export default function Home() {
           ゴキブリマップ
         </h1>
       </header>
-      <div style={{ flex: 1, position: "relative" }}>
+      {/*
+        ★2026-07-20：touchAction:"none" ＝この領域のタッチをブラウザに
+        一切解釈させない（地図サイトの標準装備）。ページピンチ拡大は
+        gesturestart対策で殺したが、Safariには「ダブルタップ拡大」も残って
+        いて、ピンチ連打の置いて離しての連続がダブルタップと誤認されると
+        タッチが打ち切られ、幻の指が再発する。これで横取りを全種類遮断。
+        地図・凡例・Gボタンのタップ動作はJS処理なので影響なし。
+      */}
+      <div style={{ flex: 1, position: "relative", touchAction: "none" }}>
         <Map
           ref={mapRef}
           onMapClick={handleMapClick}

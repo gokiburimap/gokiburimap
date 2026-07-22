@@ -348,7 +348,7 @@ const createClusterIconUrl = (count: number, size: number) => {
 };
 
 const clusterIconCache = new Map<string, string>();
-const CLUSTER_CACHE_MAX = 400;
+const CLUSTER_CACHE_MAX = 150;
 const CLUSTER_SIZE_QUANTUM = 4;
 function getCachedClusterIconUrl(count: number, size: number) {
   // 霧と同じく、ズームで連続変化するsizeを刻みに丸めて蓄積を防ぐ
@@ -534,7 +534,7 @@ function createCloudIconUrl(count: number, colorCount: number, size: number, see
 // 無限蓄積を根本で止める。
 // ============================================================
 const cloudIconCache = new Map<string, string>();
-const CLOUD_CACHE_MAX = 400;   // 保持する霧画像の最大数
+const CLOUD_CACHE_MAX = 150;   // 保持する霧画像の最大数(2026-07-20: 400→150。長時間利用のメモリ圧迫対策)
 const SIZE_QUANTUM = 8;        // 霧サイズをこのpx刻みに丸める
 
 function getCachedCloudIconUrl(count: number, colorCount: number, size: number, seed: number) {
