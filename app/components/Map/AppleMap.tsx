@@ -1448,6 +1448,8 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       });
 
       mapRef.current = map;
+      // 🔬 デバッグHUDが地図のspan(ズーム状態)を読めるように公開（原因究明用）
+      (window as any).__mapForDebug = map;
 
       // ============================================================
       // 🛡【②ズームの深さの上限はここ】法的リスク対策

@@ -16,42 +16,57 @@ type Step = "idle" | "selecting" | "dragging" | "inputting";
 // 0に戻らなければ、ブラウザ層でタッチが取りこぼされている証拠。
 // ============================================================
 function TouchDebugHUD() {
-  const [info, setInfo] = useState({ raw: 0, max: 0, last: "-", stuck: 0 });
+  const [info, setInfo] = useState({ raw: 0, max: 0, last: "-", anomaly: 0, note: "-" });
   useEffect(() => {
     let maxSeen = 0;
-    let stuckCount = 0;
-    const update = (name: string, e: TouchEvent) => {
-      const raw = e.touches.length;
-      if (raw > maxSeen) maxSeen = raw;
-      // touchend/cancelで指が全部離れるべき状況を判定
-      if ((name === "end" || name === "cancel") && raw > 0) {
-        // まだ指が残っている、は正常なこともあるが、
-        // changedTouchesと合わせて「全部離したのに残っている」を検出
-        if (e.touches.length > 0 && e.changedTouches.length >= e.touches.length) {
-          // ここは厳密判定が難しいので、raw>0のままendが来た回数を数える
+    let anomalyCount = 0;
+    let curFingers = 0;
+
+    // ============================================================
+    // 🔬 異常検出（2026-07-20 強化版）
+    // 「指1本なのに、地図のズーム率が変化した」瞬間を異常として数える。
+    // ＝MapKitがパンをズームと誤認している状態＝バグの発生そのもの。
+    //
+    // MapKit JS のズーム倍率は取れないので、代わりに地図の表示範囲
+    // （span：緯度方向の見えている幅）を監視する。指1本の操作中に span が
+    // 目に見えて変わったら、それは「1本指でズームした」＝異常。
+    // window.__mapForDebug に地図を入れておき（AppleMap側で設定）、
+    // ここから span を読む。
+    // ============================================================
+    let lastSpan = 0;
+    const readSpan = (): number => {
+      try {
+        const m = (window as any).__mapForDebug;
+        return m?.region?.span?.latitudeDelta ?? 0;
+      } catch {
+        return 0;
+      }
+    };
+
+    const onTouch = (name: string) => (e: TouchEvent) => {
+      curFingers = e.touches.length;
+      if (curFingers > maxSeen) maxSeen = curFingers;
+
+      if (name === "start") {
+        lastSpan = readSpan();
+      }
+      if (name === "move" && curFingers === 1) {
+        // 指1本で動かしている最中に span が5%以上変わったら異常
+        const now = readSpan();
+        if (lastSpan > 0 && Math.abs(now - lastSpan) / lastSpan > 0.05) {
+          anomalyCount += 1;
+          setInfo((p) => ({ ...p, anomaly: anomalyCount, note: "1本指でズーム発生!" }));
         }
+        lastSpan = now;
       }
-      setInfo((prev) => {
-        const stuck =
-          (name === "end" || name === "cancel") && raw > 0 ? prev.stuck : prev.stuck;
-        return { raw, max: maxSeen, last: `${name}:${raw}`, stuck };
-      });
-    };
-    // 「指0のはずが残る」検出：最後のtouchendから200ms後にrawが0でなければstuck
-    let lastRaw = 0;
-    const onAny = (name: string) => (e: TouchEvent) => {
-      lastRaw = e.touches.length;
-      update(name, e);
-      if (name === "end" || name === "cancel") {
-        setTimeout(() => {
-          if (lastRaw > 0) {
-            stuckCount += 1;
-            setInfo((prev) => ({ ...prev, stuck: stuckCount }));
-          }
-        }, 250);
+      if (name === "start" || name === "move") {
+        setInfo((p) => ({ ...p, raw: curFingers, max: maxSeen, last: `${name}:${curFingers}` }));
+      } else {
+        setInfo((p) => ({ ...p, raw: e.touches.length, last: `${name}:${e.touches.length}` }));
       }
     };
-    const s = onAny("start"), m = onAny("move"), en = onAny("end"), c = onAny("cancel");
+
+    const s = onTouch("start"), m = onTouch("move"), en = onTouch("end"), c = onTouch("cancel");
     const opt = { capture: true, passive: true } as AddEventListenerOptions;
     document.addEventListener("touchstart", s, opt);
     document.addEventListener("touchmove", m, opt);
@@ -71,7 +86,7 @@ function TouchDebugHUD() {
         top: 8,
         right: 8,
         zIndex: 3000,
-        background: info.raw > 0 ? "rgba(200,40,40,0.92)" : "rgba(20,20,20,0.82)",
+        background: info.anomaly > 0 ? "rgba(200,20,20,0.95)" : "rgba(20,20,20,0.82)",
         color: "#fff",
         font: "600 12px/1.5 monospace",
         padding: "6px 10px",
@@ -80,7 +95,7 @@ function TouchDebugHUD() {
         whiteSpace: "pre",
       }}
     >
-      {`指:${info.raw}  最大:${info.max}\n最後:${info.last}\n取りこぼし:${info.stuck}`}
+      {`指:${info.raw}  最大:${info.max}\n最後:${info.last}\n異常:${info.anomaly}  ${info.note}`}
     </div>
   );
 }
