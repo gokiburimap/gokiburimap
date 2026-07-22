@@ -1537,13 +1537,15 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         // ============================================================
         if (before > 0 && fingersDown === 0) {
           try {
+            // ★2026-07-22 修正：リセットするのはズームだけ。
+            //   スクロール(パン)まで一瞬オフにすると、指を離した後の
+            //   慣性スクロール(スーッと流れる滑らかさ)が断ち切られて
+            //   動きがカクつくため。幻の指問題はズーム側で起きるので、
+            //   ズームだけリセットすれば対策として十分。
             map.isZoomEnabled = false;
-            map.isScrollEnabled = false;
-            // 次のフレームで戻す（MapKitに状態破棄を確定させてから再有効化）
             requestAnimationFrame(() => {
               try {
                 map.isZoomEnabled = true;
-                map.isScrollEnabled = true;
               } catch { /* noop */ }
             });
           } catch { /* noop */ }
