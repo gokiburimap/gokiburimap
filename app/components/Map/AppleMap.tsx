@@ -1015,68 +1015,42 @@ function renderMarkers(
     }
 
     // ============================================================
-    // ★2026-07-20 幻の指バグの根本修正：自前<img>方式に変更
+    // マーカー生成（2026-07-22 シンプル化・引き算）
     //
-    // 従来は mapkit.ImageAnnotation を使っていたが、それだと画像要素に
-    // CSSを指定できない。iPhoneのSafariは<img>を指で押さえたままにすると
-    // 長押しプレビュー等の独自動作を発動し、その瞬間ページへのタッチ通知を
-    // 打ち切る。するとMapKitのタッチ勘定が狂い「幻の指」が残る：
-    //   ・1本指スライド → MapKitには2本に見え、ピンチ(ズーム)になる
-    //   ・2本指ピンチ → 3本に見え、全く反応しない
-    // ピンチは静止の瞬間があるので長押し判定が進む。パンは動き続けるので
-    // ならない。霧のない場所は<img>の上ではないので起きない。
-    //
-    // 対策として自前で<img>を作り、以下を直接指定する：
-    //   ・-webkit-touch-callout:none（長押しメニュー禁止）
-    //   ・user-select / user-drag none（選択・ドラッグ禁止）
-    //   ・霧は pointer-events:none（タッチ完全素通し＝地図の素の面と同じ）
-    // 円(🪳+数字)はタップで展開ズームするため pointer-events は残す。
+    // 今日の泥沼の元凶だった「全マーカー触覚ゼロ＋自前タップ判定＋
+    // タッチ監視で地図をいじる」構成を撤去。素のMapKitに戻す：
+    //   ・霧(isCloudZoom) … タップ不要なので enabled:false（素通し）
+    //   ・円(🪳+数字)     … タップで展開ズーム。標準の enabled:true ＋
+    //                        アノテーションの select イベントで処理する。
+    // 地図をいじるコード(isZoomEnabled等)を一切持たないので、
+    // 1本指ズーム/霧固まりの発生源そのものが無くなる。
     // ============================================================
-    const annotation = new window.mapkit.Annotation(
-      coordinate,
-      () => {
-        const img = document.createElement("img");
-        img.src = icon;
-        img.alt = "";
-        img.draggable = false;
-        img.style.width = `${displaySize}px`;
-        img.style.height = `${displaySize}px`;
-        img.style.display = "block";
-        img.style.userSelect = "none";
-        (img.style as any).webkitUserSelect = "none";
-        (img.style as any).webkitUserDrag = "none";
-        (img.style as any).webkitTouchCallout = "none";
-        // ★2026-07-20 第4版：霧だけでなく円(🪳+数字)も含め、全マーカーを
-        //   タッチ完全素通しにする。タッチに反応するアイコンの上に指を
-        //   置いてピンチすると、MapKitのタッチ帳簿が狂い「幻の指」が残る
-        //   ことが実機検証で確定したため（霧はpointer-events:noneで直り、
-        //   円だけ壊れ続けた＝発生条件は「触覚のあるアイコン」そのもの）。
-        //   円のタップ展開は、地図側のsingle-tapで自前判定する（下記参照）。
-        img.style.pointerEvents = "none";
-        return img;
-      },
-      { anchorOffset: new DOMPoint(0, -displaySize / 2) }
-    );
+    const annotation = new window.mapkit.ImageAnnotation(coordinate, {
+      url: { 1: icon },
+      size: { width: displaySize, height: displaySize },
+      anchorOffset: new DOMPoint(0, -displaySize / 2),
+    });
 
-    // ============================================================
-    // 全マーカーは触覚ゼロ（enabled=false・pointer-events:none）。
-    // タッチは常に地図の素の面に届くので、ジェスチャーが壊れる余地がない。
-    // __baseEnabled も常にfalse（applyAnnotationInteractivityが復帰時に
-    // 参照する「本来の値」。触覚ゼロ方針のため全マーカーfalseで固定）。
-    // ============================================================
-    (annotation as any).__baseEnabled = false;
-    annotation.enabled = false;
+    // 霧はタップ不可（素通し）、円はタップ可（展開ズーム）
+    annotation.enabled = isCluster && !isCloudZoom;
 
-    // 円(🪳＋数字)のタップ展開ズームは、アノテーションのselectではなく
-    // 地図のsingle-tapハンドラで自前判定する。その判定に必要な情報
-    // （クラスタID・中心座標・画面上の半径）をアノテーションに持たせる。
     if (isCluster && !isCloudZoom) {
-      (annotation as any).__tapExpand = {
-        clusterId: c.properties.cluster_id,
-        lat: offsetLat,
-        lng: offsetLng,
-        radiusPx: displaySize / 2,
-      };
+      annotation.addEventListener("select", () => {
+        try {
+          const expansionZoom = Math.min(
+            clusterIndexRef.current!.getClusterExpansionZoom(c.properties.cluster_id),
+            MAX_CLUSTER_ZOOM
+          );
+          const newSpanDeg = 360 / Math.pow(2, expansionZoom);
+          map.setRegionAnimated(
+            new window.mapkit.CoordinateRegion(
+              new window.mapkit.Coordinate(offsetLat, offsetLng),
+              new window.mapkit.CoordinateSpan(newSpanDeg, newSpanDeg)
+            )
+          );
+        } catch { /* noop */ }
+        try { annotation.selected = false; } catch { /* noop */ }
+      });
     }
     return annotation;
   });
@@ -1482,71 +1456,11 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       };
       requestRenderRef.current = doRender;
 
-      // ============================================================
-      // 🖐 1本指ズーム対策・isZoomEnabledを使わない版（2026-07-22 最終方針）
-      //
-      // 【確定事実】isZoomEnabled の false→true リセットは、1本指ズームは
-      // 直すが必ず地図の収束を壊し region-change-end を飛ばして霧を固まらせる。
-      // 何通りタイミングを変えても両立しなかった。→ isZoomEnabled は一切使わない。
-      //
-      // 【新方式】地図の設定に触らず、1本指ズームが「起きた瞬間」に補正する。
-      // ・指1本で触れている最中に、ズーム率(span)が動いたら＝1本指ズームの発生。
-      // ・その瞬間、span を直前の正しい値へ setRegion で戻す（＝化けたズームを
-      //   取り消す）。中心は今の位置のまま。アニメーション無しなので即時。
-      // ・isZoomEnabled に触らないので収束は壊れず、霧は固まらない。
-      //
-      // 描き直しは region-change-end のみ（シンプルに戻す）。
-      // ============================================================
-      let fingersDown = 0;
-      let spanWhenOneFinger = 0;
-      let centerWhenOneFinger: any = null;
-
+      // 描き直しは region-change-end のみ。地図をいじるタッチ監視は一切持たない
+      // （引き算方針。1本指ズーム/霧固まりの発生源だった地図いじりを撤去）。
       map.addEventListener("region-change-end", () => {
         doRender();
       });
-
-      const readSpan = () => {
-        try { return map.region.span.latitudeDelta as number; } catch { return 0; }
-      };
-
-      const onTouchG = (e: TouchEvent) => {
-        const before = fingersDown;
-        fingersDown = e.touches.length;
-        if (fingersDown === 1 && before !== 1) {
-          // 指がちょうど1本になった：その時点の正しいズーム率と中心を記録
-          spanWhenOneFinger = readSpan();
-          try { centerWhenOneFinger = map.center; } catch { centerWhenOneFinger = null; }
-        }
-      };
-      const onMoveG = () => {
-        if (fingersDown !== 1 || spanWhenOneFinger <= 0) return;
-        const nowSpan = readSpan();
-        // 1本指なのにズーム率が3%以上変わった＝1本指ズーム発生 → その場で戻す
-        if (Math.abs(nowSpan - spanWhenOneFinger) / spanWhenOneFinger > 0.03) {
-          try {
-            const c = map.center; // 移動ぶんは活かし、ズーム率だけ戻す
-            map.setRegionAnimated(
-              new window.mapkit.CoordinateRegion(
-                new window.mapkit.Coordinate(c.latitude, c.longitude),
-                new window.mapkit.CoordinateSpan(spanWhenOneFinger, spanWhenOneFinger)
-              ),
-              false // アニメーション無し＝即座にズーム率を戻す
-            );
-          } catch { /* noop */ }
-        }
-      };
-      const gOpt = { capture: true, passive: true } as AddEventListenerOptions;
-      document.addEventListener("touchstart", onTouchG, gOpt);
-      document.addEventListener("touchend", onTouchG, gOpt);
-      document.addEventListener("touchcancel", onTouchG, gOpt);
-      document.addEventListener("touchmove", onMoveG, gOpt);
-      touchCleanupRef.current = () => {
-        document.removeEventListener("touchstart", onTouchG, gOpt);
-        document.removeEventListener("touchend", onTouchG, gOpt);
-        document.removeEventListener("touchcancel", onTouchG, gOpt);
-        document.removeEventListener("touchmove", onMoveG, gOpt);
-      };
-
 
       renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
       applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
@@ -1582,32 +1496,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
             }
           }
 
-          for (const ann of markersRef.current) {
-            const t = (ann as any)?.__tapExpand;
-            if (!t) continue; // 霧には__tapExpandが無い＝展開対象外
-            try {
-              const p = map.convertCoordinateToPointOnPage(
-                new window.mapkit.Coordinate(t.lat, t.lng)
-              );
-              if (Math.hypot(tapPt.x - p.x, tapPt.y - p.y) <= t.radiusPx) {
-                const expansionZoom = Math.min(
-                  clusterIndexRef.current!.getClusterExpansionZoom(t.clusterId),
-                  MAX_CLUSTER_ZOOM
-                );
-                const newSpanDeg = 360 / Math.pow(2, expansionZoom);
-                map.setRegionAnimated(
-                  new window.mapkit.CoordinateRegion(
-                    new window.mapkit.Coordinate(t.lat, t.lng),
-                    new window.mapkit.CoordinateSpan(newSpanDeg, newSpanDeg)
-                  )
-                );
-                return;
-              }
-            } catch {
-              /* 座標変換に失敗した円はスキップ */
-            }
-          }
-          return; // 円に当たらなければ、通常閲覧中は何もしない
+          return; // 投稿フロー外の通常タップは、円=標準select・他=無反応
         }
 
         const coordinate = map.convertPointOnPageToCoordinate(event.pointOnPage);
@@ -1629,7 +1518,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
     return () => {
       cancelled = true;
-      touchCleanupRef.current(); // ズームリセットのタッチ監視を解除
+      touchCleanupRef.current(); // タッチ監視の後始末（現状は未使用・無害）
       if (mapRef.current) {
         mapRef.current.destroy();
         mapRef.current = null;
