@@ -1516,7 +1516,39 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       requestRenderRef.current = requestRender;
 
       const onTouchChange = (e: TouchEvent) => {
+        const before = fingersDown;
         fingersDown = e.touches.length;
+
+        // ============================================================
+        // 🧹 WebKit(iPhone)のtouchend取りこぼし対策（2026-07-22 確定対策）
+        //
+        // 【確定した原因】
+        // ・バグ時もMapKit内部状態は正常（実機スクショで確認）
+        // ・Androidでは起きず、iPhoneでだけ起きる（＝WebKit由来で確定）
+        // → WebKitが指の離脱(touchend)を取りこぼし、MapKitが離れた指を
+        //   「まだ触れている」と握り続ける。結果、指1本のパンが2本指
+        //   ピンチと誤認されズームに化ける（内部状態は矛盾しないので正常に見える）。
+        //
+        // 【対策】ブラウザのtouchendは capture フェーズで確実に拾える
+        // （HUDで実証済み）。指が0本になった瞬間に、地図のズーム/スクロールを
+        // 一瞬オフ→オンして、MapKitが握っているジェスチャー状態を強制的に
+        // 破棄させる。これでWebKitの取りこぼしを我々が埋め、幻の指を消す。
+        // Androidでも無害（元々取りこぼさないので、単に何も壊れない）。
+        // ============================================================
+        if (before > 0 && fingersDown === 0) {
+          try {
+            map.isZoomEnabled = false;
+            map.isScrollEnabled = false;
+            // 次のフレームで戻す（MapKitに状態破棄を確定させてから再有効化）
+            requestAnimationFrame(() => {
+              try {
+                map.isZoomEnabled = true;
+                map.isScrollEnabled = true;
+              } catch { /* noop */ }
+            });
+          } catch { /* noop */ }
+        }
+
         if (fingersDown === 0 && renderPending) {
           // 全ての指が離れた：凍結していた描き直しをここで実行
           renderPending = false;
