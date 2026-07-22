@@ -1495,6 +1495,14 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       // これで「指が触れている最中のアノテーション操作」が物理的にゼロに
       // なり、ジェスチャー状態が壊れる隙が消える。
       // ============================================================
+      // 🖐 霧の描き直し（2026-07-22 凍結を撤去してシンプル化）
+      //
+      // 【経緯】以前は「指が触れている間は描き直さない」凍結を入れていたが、
+      // WebKitのtouchend取りこぼしで凍結が解けず、霧が固まる不具合を起こした。
+      // そして幻の指バグは、凍結ではなく後述のズームリセットだけで直ることが
+      // 実機テストで判明した。よって凍結は撤去し、描き直しは常に即実行に戻す。
+      // 固まりの原因（凍結の解除漏れ）が構造ごと消える。
+      // ============================================================
       const doRender = () => {
         renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
         applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
@@ -1502,38 +1510,9 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       };
 
       let fingersDown = 0;
-      let renderPending = false;
-      let pendingSafetyTimer: ReturnType<typeof setTimeout> | null = null;
-
-      // 凍結が解除されないまま固まるのを防ぐ保険。保留になったら、
-      // 一定時間後に「指が本当にまだ触れているか」を再確認し、
-      // 離れていれば強制的に描き直す。touchendの取りこぼしで凍結が
-      // 解けなくなっても、必ずここで復帰する。
-      const armPendingSafety = () => {
-        if (pendingSafetyTimer) clearTimeout(pendingSafetyTimer);
-        pendingSafetyTimer = setTimeout(() => {
-          pendingSafetyTimer = null;
-          if (renderPending && fingersDown === 0) {
-            renderPending = false;
-            doRender();
-          } else if (renderPending) {
-            // まだ指が触れている：もう一度だけ様子を見る
-            armPendingSafety();
-          }
-        }, 400);
-      };
-
       const requestRender = () => {
-        if (fingersDown > 0) {
-          // 指が触れている間は保留（凍結）。離れた瞬間に実行される。
-          renderPending = true;
-          armPendingSafety(); // ★保険を仕掛ける
-        } else {
-          renderPending = false;
-          doRender();
-        }
+        doRender(); // 凍結せず常に即描き直す
       };
-      // renderMarkers側/他所から「描き直したい」ときはこの関数を通す
       requestRenderRef.current = requestRender;
 
       const onTouchChange = (e: TouchEvent) => {
@@ -1570,13 +1549,6 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
               } catch { /* noop */ }
             });
           } catch { /* noop */ }
-        }
-
-        if (fingersDown === 0 && renderPending) {
-          // 全ての指が離れた：凍結していた描き直しをここで実行
-          renderPending = false;
-          if (pendingSafetyTimer) { clearTimeout(pendingSafetyTimer); pendingSafetyTimer = null; }
-          doRender();
         }
       };
       const tOpt = { capture: true, passive: true } as AddEventListenerOptions;
