@@ -1514,31 +1514,51 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       };
       requestRenderRef.current = doRender;
 
-      map.addEventListener("region-change-end", () => {
-        doRender();
-      });
-
       // ============================================================
-      // 🖐 ズームリセット（1本指ズームのバグ対策・実機で多数回無事を確認した版）
+      // 🖐 ズームリセット（1本指ズーム対策）・静止後に掛ける版（2026-07-22）
       //
-      // 指が全部離れた瞬間に isZoomEnabled を false→true する。これで
-      // MapKitが握っていたジェスチャー状態がリセットされ、iPhoneで起きる
-      // 「1本指スライドがズームに化ける」バグが出なくなる（実機確認済み）。
+      // 【1本指ズームのバグ】iPhoneでピンチ後、1本指スライドがズームに化ける。
+      // 対策は isZoomEnabled を false→true するリセット。ただし——
       //
-      // ※isScrollEnabledは触らない（触ると慣性スクロールが死んで
-      //   移動がカクつくため。ズームだけリセットすれば対策として足りる）。
+      // 【霧固まりとの因果（外部指摘＋実測で判明）】
+      // 旧版は「指が離れた瞬間」に即リセットしていた。しかし指を離した直後、
+      // MapKitはピンチの慣性収束アニメーションを内部で進めている。その最中に
+      // isZoomEnabledを切り替えると収束が中断され、本来出るはずの
+      // region-change-endが飛ぶ。region-change-endは霧・アイコンを描き直す
+      // 唯一の入口なので、飛ぶと霧が固まる（＝今日の固まりバグの正体）。
+      //
+      // 【修正】リセットを「指が離れた瞬間」ではなく「指が離れて、かつ地図の
+      // 動き(収束含む)が完全に終わってから」掛ける。収束を邪魔しないので
+      // region-change-endは正常に発火し（霧は固まらない）、そのうえで
+      // 1本指ズーム対策のリセットも掛かる（1本指ズームも出ない）。両立する。
+      //
+      // 実装：指が全部離れたらフラグを立て、次に region-change-end が来た
+      // （＝地図が静止した）ときにリセットを1回だけ実行する。
       // ============================================================
       let fingersDown = 0;
-      const onTouchG = (e: TouchEvent) => {
-        const before = fingersDown;
-        fingersDown = e.touches.length;
-        if (before > 0 && fingersDown === 0) {
+      let resetArmed = false;
+
+      map.addEventListener("region-change-end", () => {
+        doRender();
+        // 指が離れた後の静止を確認できた → ここで安全にズームリセット
+        if (resetArmed && fingersDown === 0) {
+          resetArmed = false;
           try {
             map.isZoomEnabled = false;
             requestAnimationFrame(() => {
               try { map.isZoomEnabled = true; } catch { /* noop */ }
             });
           } catch { /* noop */ }
+        }
+      });
+
+      const onTouchG = (e: TouchEvent) => {
+        const before = fingersDown;
+        fingersDown = e.touches.length;
+        if (before > 0 && fingersDown === 0) {
+          // 指が全部離れた → 「次に地図が静止したらリセットする」と予約だけ。
+          // 即リセットはしない（収束アニメーションを壊さないため）。
+          resetArmed = true;
         }
       };
       const gOpt = { capture: true, passive: true } as AddEventListenerOptions;
