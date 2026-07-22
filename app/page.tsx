@@ -17,64 +17,76 @@ type Step = "idle" | "selecting" | "dragging" | "inputting";
 // ============================================================
 function TouchDebugHUD() {
   const [info, setInfo] = useState({ raw: 0, max: 0, last: "-", anomaly: 0, note: "-" });
+  const [dump, setDump] = useState("");
   useEffect(() => {
     let maxSeen = 0;
     let anomalyCount = 0;
     let curFingers = 0;
 
     // ============================================================
-    // 🔬 異常検出（2026-07-20 強化版）
-    // 「指1本なのに、地図のズーム率が変化した」瞬間を異常として数える。
-    // ＝MapKitがパンをズームと誤認している状態＝バグの発生そのもの。
-    //
-    // MapKit JS のズーム倍率は取れないので、代わりに地図の表示範囲
-    // （span：緯度方向の見えている幅）を監視する。指1本の操作中に span が
-    // 目に見えて変わったら、それは「1本指でズームした」＝異常。
-    // window.__mapForDebug に地図を入れておき（AppleMap側で設定）、
-    // ここから span を読む。
+    // 🔬 地図内部状態のライブダンプ（2026-07-22 実機観測用）
+    // MapKitの_impl内の、ズーム/ジェスチャー関連で「動いている時だけ
+    // 現れる一時的な数値」を含めて拾い、画面に出す。
+    // ・静止時と、ピンチ中と、バグ後で、この表示がどう変わるかを
+    //   iPhone単体で目視できる。
+    // ・毎フレームは重いので250ms間隔。
     // ============================================================
+    const dumpState = () => {
+      try {
+        const im = (window as any).__mapForDebug?._impl;
+        if (!im) return;
+        const out: Record<string, any> = {};
+        for (const k in im) {
+          if (/zoom|gestur|pinch|touch|drag|pan|scal|camera|anim|_is[A-Z]/i.test(k)) {
+            const v = im[k];
+            if (v !== null && typeof v !== "object" && typeof v !== "function") {
+              out[k] = v;
+            }
+          }
+        }
+        // 短く整形（キー名は末尾20文字、数値は小数2桁）
+        const s = Object.entries(out)
+          .map(([k, v]) => {
+            const kk = k.length > 22 ? k.slice(-22) : k;
+            const vv = typeof v === "number" ? (v as number).toFixed(2) : String(v);
+            return `${kk}=${vv}`;
+          })
+          .join("\n");
+        setDump(s || "(該当項目なし)");
+      } catch {
+        setDump("(読取失敗)");
+      }
+    };
+    const dumpTimer = setInterval(dumpState, 250);
+
     let lastSpan = 0;
-    let oneFingerSince = 0; // 指1本になった時刻
+    let oneFingerSince = 0;
     const readSpan = (): number => {
       try {
-        const m = (window as any).__mapForDebug;
-        return m?.region?.span?.latitudeDelta ?? 0;
+        return (window as any).__mapForDebug?.region?.span?.latitudeDelta ?? 0;
       } catch {
         return 0;
       }
     };
-
     const onTouch = (name: string) => (e: TouchEvent) => {
       curFingers = e.touches.length;
       if (curFingers > maxSeen) maxSeen = curFingers;
-
       const nowMs = Date.now();
-
       if (name === "start" || name === "end" || name === "cancel") {
-        // 指の本数が変わった瞬間。1本になったなら、その時刻を記録
         oneFingerSince = curFingers === 1 ? nowMs : 0;
         lastSpan = readSpan();
       }
-
       if (name === "move" && curFingers === 1) {
         const now = readSpan();
-        // ★ピンチの継ぎ目除外：指1本が「250ms以上」続いている時だけ判定。
-        //   ピンチ開始・終了の一瞬の1本状態(数十ms)は無視する。
         const stableOneFinger = oneFingerSince > 0 && nowMs - oneFingerSince > 250;
         if (stableOneFinger && lastSpan > 0 && Math.abs(now - lastSpan) / lastSpan > 0.03) {
           anomalyCount += 1;
-          setInfo((p) => ({ ...p, anomaly: anomalyCount, note: "1本指ズーム(本物)!" }));
+          setInfo((p) => ({ ...p, anomaly: anomalyCount, note: "1本指ズーム!" }));
         }
         lastSpan = now;
       }
-
-      if (name === "start" || name === "move") {
-        setInfo((p) => ({ ...p, raw: curFingers, max: maxSeen, last: `${name}:${curFingers}` }));
-      } else {
-        setInfo((p) => ({ ...p, raw: e.touches.length, last: `${name}:${e.touches.length}` }));
-      }
+      setInfo((p) => ({ ...p, raw: curFingers, max: maxSeen, last: `${name}:${curFingers}` }));
     };
-
     const s = onTouch("start"), m = onTouch("move"), en = onTouch("end"), c = onTouch("cancel");
     const opt = { capture: true, passive: true } as AddEventListenerOptions;
     document.addEventListener("touchstart", s, opt);
@@ -82,6 +94,7 @@ function TouchDebugHUD() {
     document.addEventListener("touchend", en, opt);
     document.addEventListener("touchcancel", c, opt);
     return () => {
+      clearInterval(dumpTimer);
       document.removeEventListener("touchstart", s, opt);
       document.removeEventListener("touchmove", m, opt);
       document.removeEventListener("touchend", en, opt);
@@ -95,16 +108,17 @@ function TouchDebugHUD() {
         top: 8,
         right: 8,
         zIndex: 3000,
-        background: info.anomaly > 0 ? "rgba(200,20,20,0.95)" : "rgba(20,20,20,0.82)",
+        background: info.anomaly > 0 ? "rgba(200,20,20,0.95)" : "rgba(20,20,20,0.85)",
         color: "#fff",
-        font: "600 12px/1.5 monospace",
-        padding: "6px 10px",
+        font: "600 10px/1.35 monospace",
+        padding: "6px 8px",
         borderRadius: 8,
         pointerEvents: "none",
         whiteSpace: "pre",
+        maxWidth: "62vw",
       }}
     >
-      {`指:${info.raw}  最大:${info.max}\n最後:${info.last}\n異常:${info.anomaly}  ${info.note}`}
+      {`指:${info.raw} 最大:${info.max} 異常:${info.anomaly}\n${info.note}\n---\n${dump}`}
     </div>
   );
 }
