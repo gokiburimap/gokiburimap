@@ -6,6 +6,86 @@ import ReportSidebar from "./components/ReportSidebar";
 
 type Step = "idle" | "selecting" | "dragging" | "inputting";
 
+// ============================================================
+// 🔬 タッチ観測HUD（デバッグ用・2026-07-20）
+// ブラウザの生タッチイベントを直接拾い、指の本数・取りこぼしを
+// 画面右上に常時表示する。原因が確定したら丸ごと削除する。
+//
+// document全体で capture フェーズで拾うので、地図やMapKitが
+// イベントを消費する前の"生の状態"が見える。これが指を離しても
+// 0に戻らなければ、ブラウザ層でタッチが取りこぼされている証拠。
+// ============================================================
+function TouchDebugHUD() {
+  const [info, setInfo] = useState({ raw: 0, max: 0, last: "-", stuck: 0 });
+  useEffect(() => {
+    let maxSeen = 0;
+    let stuckCount = 0;
+    const update = (name: string, e: TouchEvent) => {
+      const raw = e.touches.length;
+      if (raw > maxSeen) maxSeen = raw;
+      // touchend/cancelで指が全部離れるべき状況を判定
+      if ((name === "end" || name === "cancel") && raw > 0) {
+        // まだ指が残っている、は正常なこともあるが、
+        // changedTouchesと合わせて「全部離したのに残っている」を検出
+        if (e.touches.length > 0 && e.changedTouches.length >= e.touches.length) {
+          // ここは厳密判定が難しいので、raw>0のままendが来た回数を数える
+        }
+      }
+      setInfo((prev) => {
+        const stuck =
+          (name === "end" || name === "cancel") && raw > 0 ? prev.stuck : prev.stuck;
+        return { raw, max: maxSeen, last: `${name}:${raw}`, stuck };
+      });
+    };
+    // 「指0のはずが残る」検出：最後のtouchendから200ms後にrawが0でなければstuck
+    let lastRaw = 0;
+    const onAny = (name: string) => (e: TouchEvent) => {
+      lastRaw = e.touches.length;
+      update(name, e);
+      if (name === "end" || name === "cancel") {
+        setTimeout(() => {
+          if (lastRaw > 0) {
+            stuckCount += 1;
+            setInfo((prev) => ({ ...prev, stuck: stuckCount }));
+          }
+        }, 250);
+      }
+    };
+    const s = onAny("start"), m = onAny("move"), en = onAny("end"), c = onAny("cancel");
+    const opt = { capture: true, passive: true } as AddEventListenerOptions;
+    document.addEventListener("touchstart", s, opt);
+    document.addEventListener("touchmove", m, opt);
+    document.addEventListener("touchend", en, opt);
+    document.addEventListener("touchcancel", c, opt);
+    return () => {
+      document.removeEventListener("touchstart", s, opt);
+      document.removeEventListener("touchmove", m, opt);
+      document.removeEventListener("touchend", en, opt);
+      document.removeEventListener("touchcancel", c, opt);
+    };
+  }, []);
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: 8,
+        right: 8,
+        zIndex: 3000,
+        background: info.raw > 0 ? "rgba(200,40,40,0.92)" : "rgba(20,20,20,0.82)",
+        color: "#fff",
+        font: "600 12px/1.5 monospace",
+        padding: "6px 10px",
+        borderRadius: 8,
+        pointerEvents: "none",
+        whiteSpace: "pre",
+      }}
+    >
+      {`指:${info.raw}  最大:${info.max}\n最後:${info.last}\n取りこぼし:${info.stuck}`}
+    </div>
+  );
+}
+
+
 interface ReportPos {
   lat: number;
   lng: number;
@@ -217,6 +297,22 @@ export default function Home() {
         地図・凡例・Gボタンのタップ動作はJS処理なので影響なし。
       */}
       <div style={{ flex: 1, position: "relative", touchAction: "none" }}>
+        {/* ============================================================
+            🔬 タッチ観測HUD（デバッグ用・2026-07-20）
+            スマホ実機で、バグ発生の瞬間に「今どうなっているか」を画面で
+            読むための一時的な計器。原因が確定したら丸ごと削除する。
+
+            表示する値：
+            ・raw   ：ブラウザが認識している"今触れている生の指の本数"
+                      （touchstart/move/endから集計。これが指を離しても
+                       0に戻らなければ、ブラウザ側でタッチが取りこぼされている）
+            ・max   ：これまでに同時に触れた最大本数
+            ・last  ：最後に起きたタッチイベント名と本数
+            ・stuck ：指を全部離した(生0)はずなのにイベント上まだ残っている
+                      と判定された回数。1以上なら「取りこぼし」が起きた証拠
+           ============================================================ */}
+        <TouchDebugHUD />
+
         <Map
           ref={mapRef}
           onMapClick={handleMapClick}
