@@ -34,6 +34,7 @@ function TouchDebugHUD() {
     // ここから span を読む。
     // ============================================================
     let lastSpan = 0;
+    let oneFingerSince = 0; // 指1本になった時刻
     const readSpan = (): number => {
       try {
         const m = (window as any).__mapForDebug;
@@ -47,18 +48,26 @@ function TouchDebugHUD() {
       curFingers = e.touches.length;
       if (curFingers > maxSeen) maxSeen = curFingers;
 
-      if (name === "start") {
+      const nowMs = Date.now();
+
+      if (name === "start" || name === "end" || name === "cancel") {
+        // 指の本数が変わった瞬間。1本になったなら、その時刻を記録
+        oneFingerSince = curFingers === 1 ? nowMs : 0;
         lastSpan = readSpan();
       }
+
       if (name === "move" && curFingers === 1) {
-        // 指1本で動かしている最中に span が5%以上変わったら異常
         const now = readSpan();
-        if (lastSpan > 0 && Math.abs(now - lastSpan) / lastSpan > 0.05) {
+        // ★ピンチの継ぎ目除外：指1本が「250ms以上」続いている時だけ判定。
+        //   ピンチ開始・終了の一瞬の1本状態(数十ms)は無視する。
+        const stableOneFinger = oneFingerSince > 0 && nowMs - oneFingerSince > 250;
+        if (stableOneFinger && lastSpan > 0 && Math.abs(now - lastSpan) / lastSpan > 0.03) {
           anomalyCount += 1;
-          setInfo((p) => ({ ...p, anomaly: anomalyCount, note: "1本指でズーム発生!" }));
+          setInfo((p) => ({ ...p, anomaly: anomalyCount, note: "1本指ズーム(本物)!" }));
         }
         lastSpan = now;
       }
+
       if (name === "start" || name === "move") {
         setInfo((p) => ({ ...p, raw: curFingers, max: maxSeen, last: `${name}:${curFingers}` }));
       } else {
