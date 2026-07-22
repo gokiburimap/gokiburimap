@@ -1473,7 +1473,12 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       // 【副作用】操作中は霧が古いサイズのまま追従し、止めた瞬間に正しい
       // サイズ・クラスタに再計算される。これは意図した動作。
       // ============================================================
-      const SETTLE_MS = 220;
+      // 【B案検証 2026-07-22】デバウンスを1秒に延長。
+      // 「指を離した後の1回」がピンチの収束(慣性)中に割り込んで壊している
+      // 可能性を検証する。1秒待てば収束は確実に終わっているので、これで
+      // 直れば真犯人は「作り直し行為そのもの」ではなく「収束中への割り込み」。
+      // 直らなければ「1回でも作り直すと壊れる」が補強され、A案(書き換え方式)へ。
+      const SETTLE_MS = 1000;
       let settleTimer: ReturnType<typeof setTimeout> | null = null;
       map.addEventListener("region-change-end", () => {
         if (settleTimer) clearTimeout(settleTimer);
