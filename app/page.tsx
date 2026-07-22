@@ -16,76 +16,49 @@ type Step = "idle" | "selecting" | "dragging" | "inputting";
 // 0に戻らなければ、ブラウザ層でタッチが取りこぼされている証拠。
 // ============================================================
 function TouchDebugHUD() {
-  const [info, setInfo] = useState({ raw: 0, max: 0, last: "-", anomaly: 0, note: "-" });
+  const [info, setInfo] = useState({ raw: 0, max: 0, last: "-" });
   const [dump, setDump] = useState("");
+  const [frozen, setFrozen] = useState<string | null>(null);
+  const dumpRef = useRef("");
+
   useEffect(() => {
     let maxSeen = 0;
-    let anomalyCount = 0;
     let curFingers = 0;
 
-    // ============================================================
-    // 🔬 地図内部状態のライブダンプ（2026-07-22 実機観測用）
-    // MapKitの_impl内の、ズーム/ジェスチャー関連で「動いている時だけ
-    // 現れる一時的な数値」を含めて拾い、画面に出す。
-    // ・静止時と、ピンチ中と、バグ後で、この表示がどう変わるかを
-    //   iPhone単体で目視できる。
-    // ・毎フレームは重いので250ms間隔。
-    // ============================================================
-    const dumpState = () => {
+    const buildDump = (): string => {
       try {
         const im = (window as any).__mapForDebug?._impl;
-        if (!im) return;
-        const out: Record<string, any> = {};
+        if (!im) return "(地図なし)";
+        const out: string[] = [];
         for (const k in im) {
           if (/zoom|gestur|pinch|touch|drag|pan|scal|camera|anim|_is[A-Z]/i.test(k)) {
             const v = im[k];
             if (v !== null && typeof v !== "object" && typeof v !== "function") {
-              out[k] = v;
+              const kk = k.length > 24 ? k.slice(-24) : k;
+              const vv = typeof v === "number" ? v.toFixed(2) : String(v);
+              out.push(`${kk}=${vv}`);
             }
           }
         }
-        // 短く整形（キー名は末尾20文字、数値は小数2桁）
-        const s = Object.entries(out)
-          .map(([k, v]) => {
-            const kk = k.length > 22 ? k.slice(-22) : k;
-            const vv = typeof v === "number" ? (v as number).toFixed(2) : String(v);
-            return `${kk}=${vv}`;
-          })
-          .join("\n");
-        setDump(s || "(該当項目なし)");
+        // span(ズーム率)も足す
+        const span = (window as any).__mapForDebug?.region?.span?.latitudeDelta;
+        if (span != null) out.unshift(`SPAN=${Number(span).toFixed(5)}`);
+        return out.join("\n") || "(該当なし)";
       } catch {
-        setDump("(読取失敗)");
+        return "(読取失敗)";
       }
     };
-    const dumpTimer = setInterval(dumpState, 250);
 
-    let lastSpan = 0;
-    let oneFingerSince = 0;
-    const readSpan = (): number => {
-      try {
-        return (window as any).__mapForDebug?.region?.span?.latitudeDelta ?? 0;
-      } catch {
-        return 0;
-      }
-    };
+    const dumpTimer = setInterval(() => {
+      const s = buildDump();
+      dumpRef.current = s;
+      setDump(s);
+    }, 200);
+
     const onTouch = (name: string) => (e: TouchEvent) => {
       curFingers = e.touches.length;
       if (curFingers > maxSeen) maxSeen = curFingers;
-      const nowMs = Date.now();
-      if (name === "start" || name === "end" || name === "cancel") {
-        oneFingerSince = curFingers === 1 ? nowMs : 0;
-        lastSpan = readSpan();
-      }
-      if (name === "move" && curFingers === 1) {
-        const now = readSpan();
-        const stableOneFinger = oneFingerSince > 0 && nowMs - oneFingerSince > 250;
-        if (stableOneFinger && lastSpan > 0 && Math.abs(now - lastSpan) / lastSpan > 0.03) {
-          anomalyCount += 1;
-          setInfo((p) => ({ ...p, anomaly: anomalyCount, note: "1本指ズーム!" }));
-        }
-        lastSpan = now;
-      }
-      setInfo((p) => ({ ...p, raw: curFingers, max: maxSeen, last: `${name}:${curFingers}` }));
+      setInfo({ raw: curFingers, max: maxSeen, last: `${name}:${curFingers}` });
     };
     const s = onTouch("start"), m = onTouch("move"), en = onTouch("end"), c = onTouch("cancel");
     const opt = { capture: true, passive: true } as AddEventListenerOptions;
@@ -101,6 +74,7 @@ function TouchDebugHUD() {
       document.removeEventListener("touchcancel", c, opt);
     };
   }, []);
+
   return (
     <div
       style={{
@@ -108,17 +82,40 @@ function TouchDebugHUD() {
         top: 8,
         right: 8,
         zIndex: 3000,
-        background: info.anomaly > 0 ? "rgba(200,20,20,0.95)" : "rgba(20,20,20,0.85)",
+        background: frozen ? "rgba(200,20,20,0.95)" : "rgba(20,20,20,0.85)",
         color: "#fff",
         font: "600 10px/1.35 monospace",
         padding: "6px 8px",
         borderRadius: 8,
-        pointerEvents: "none",
         whiteSpace: "pre",
-        maxWidth: "62vw",
+        maxWidth: "66vw",
+        pointerEvents: "auto",
       }}
     >
-      {`指:${info.raw} 最大:${info.max} 異常:${info.anomaly}\n${info.note}\n---\n${dump}`}
+      <div style={{ pointerEvents: "none" }}>
+        {`指:${info.raw} 最大:${info.max}\n---LIVE---\n${dump}`}
+      </div>
+      {/* ★バグった状態でこのボタンをタップ → その瞬間の状態を凍結記録 */}
+      <button
+        onClick={() => setFrozen(frozen ? null : dumpRef.current)}
+        style={{
+          marginTop: 6,
+          width: "100%",
+          background: frozen ? "#fff" : "#B3261E",
+          color: frozen ? "#B3261E" : "#fff",
+          border: "none",
+          borderRadius: 6,
+          padding: "6px 4px",
+          font: "700 11px monospace",
+        }}
+      >
+        {frozen ? "解除(もう一度記録)" : "◀バグった今を記録"}
+      </button>
+      {frozen && (
+        <div style={{ marginTop: 6, pointerEvents: "none" }}>
+          {`===記録===\n${frozen}`}
+        </div>
+      )}
     </div>
   );
 }
