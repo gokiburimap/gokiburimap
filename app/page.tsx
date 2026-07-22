@@ -92,9 +92,20 @@ export default function Home() {
     const prevent = (e: Event) => e.preventDefault();
     document.addEventListener("gesturestart", prevent, { passive: false } as AddEventListenerOptions);
     document.addEventListener("gesturechange", prevent, { passive: false } as AddEventListenerOptions);
+
+    // ★Chrome/Safari共通：ドキュメント全体でブラウザのタッチ横取り
+    //   （ダブルタップ拡大・ピンチ拡大）を抑制する保険。<main>への
+    //   touchActionだけでは、環境によりダブルタップ拡大が残ることがある。
+    const style = document.createElement("style");
+    style.textContent =
+      "html,body{touch-action:none;overscroll-behavior:none;}" +
+      "html,body{-webkit-text-size-adjust:100%;}";
+    document.head.appendChild(style);
+
     return () => {
       document.removeEventListener("gesturestart", prevent);
       document.removeEventListener("gesturechange", prevent);
+      document.head.removeChild(style);
     };
   }, []);
 
@@ -171,7 +182,7 @@ export default function Home() {
       画面下のGボタンが見切れて、ページ全体をスライドしないと見えなかった。
       100dvh（実際に見えている高さ）にすると、常に画面内に収まる。
     */
-    <main style={{ width: "100vw", height: "100dvh", display: "flex", flexDirection: "column" }}>
+    <main style={{ width: "100vw", height: "100dvh", display: "flex", flexDirection: "column", touchAction: "none" }}>
       <header style={{
         background: "white",
         padding: "12px 16px",
