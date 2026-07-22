@@ -1519,20 +1519,73 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       });
 
       // ============================================================
-      // 🧭 幻の指対策は一旦「無し」にする（2026-07-22 切り分け）
+      // 🩹 バグ自動復旧（2026-07-22・ユーザー無操作で裏で直す）
       //
-      // 【判明した事実】isZoomEnabled を false→true するリセットは、
-      // 幻の指は直すが、その操作自体がMapKitのイベント発火機構を壊す。
-      // 結果、region-change-end も single-tap も発火しなくなり、
-      // 「霧が固まる・アイコンが出ない・投稿タップも効かない・移動が重い」
-      // という全イベント停止を招いていた（エラー=0＝クラッシュではなく
-      // イベントが呼ばれていない、という観測と一致）。同期化しても
-      // 直らなかった＝窓の問題ではなく、セッターに触ること自体が原因。
+      // 【症状の正体】iPhoneのWebKit上でMapKitがピンチ終了を取りこぼし、
+      // 「まだ2本指で操作中」と思い込んで固まる。以後1本指スライドも
+      // タップもその"終わらないジェスチャー"に吸われ、ズーム化け・
+      // タップ無反応・移動重い・霧固定になる。isZoomEnabledいじりは
+      // イベント機構を壊すので使わない。
       //
-      // よって isZoomEnabled いじりは全撤去。これで地図は固まらない
-      // （投稿・ズーム・パン全て生きる）。幻の指は一旦戻るが、次段階で
-      // セッターに触らない別手段（touchend合成など）で対策する。
+      // 【復旧方法】バグを検知したら、今のカメラ中心をアニメーション無しで
+      // そのまま再設定する。値は同じなので画面は1ミリも動かない（カクつき
+      // ゼロ）が、MapKitは「新しいカメラ指定が来た」として固まった
+      // ジェスチャー状態を破棄し、正常状態から再スタートする。
+      //
+      // 【検知方法】指1本だけ触れている最中に、地図のズーム率(span)が
+      // 目に見えて変化したら＝1本指ズームのバグが発生中。これは実機HUDで
+      // 検知が正しく機能することを確認済みの方法。
       // ============================================================
+      let fingersDown = 0;
+      let spanAtOneFingerStart = 0;
+      let lastRecover = 0;
+
+      const recover = () => {
+        const now = Date.now();
+        if (now - lastRecover < 400) return; // 復旧の連発を防ぐ
+        lastRecover = now;
+        try {
+          const c = map.center; // 今の中心（動かさない）
+          map.setCenterAnimated(
+            new window.mapkit.Coordinate(c.latitude, c.longitude),
+            false // アニメーション無し＝見た目は不動、内部だけリセット
+          );
+        } catch { /* noop */ }
+      };
+
+      const readSpan = () => {
+        try { return map.region.span.latitudeDelta as number; } catch { return 0; }
+      };
+
+      const onTouchG = (e: TouchEvent) => {
+        const before = fingersDown;
+        fingersDown = e.touches.length;
+        if (fingersDown === 1 && before !== 1) {
+          // 指がちょうど1本になった瞬間の基準ズーム率を記録
+          spanAtOneFingerStart = readSpan();
+        }
+      };
+      const onMoveG = () => {
+        if (fingersDown !== 1) return;
+        const nowSpan = readSpan();
+        // 1本指なのにズーム率が5%以上変わった＝バグ発生中 → 即復旧
+        if (spanAtOneFingerStart > 0 &&
+            Math.abs(nowSpan - spanAtOneFingerStart) / spanAtOneFingerStart > 0.05) {
+          recover();
+          spanAtOneFingerStart = nowSpan; // 復旧後の基準を取り直す
+        }
+      };
+      const gOpt = { capture: true, passive: true } as AddEventListenerOptions;
+      document.addEventListener("touchstart", onTouchG, gOpt);
+      document.addEventListener("touchend", onTouchG, gOpt);
+      document.addEventListener("touchcancel", onTouchG, gOpt);
+      document.addEventListener("touchmove", onMoveG, gOpt);
+      touchCleanupRef.current = () => {
+        document.removeEventListener("touchstart", onTouchG, gOpt);
+        document.removeEventListener("touchend", onTouchG, gOpt);
+        document.removeEventListener("touchcancel", onTouchG, gOpt);
+        document.removeEventListener("touchmove", onMoveG, gOpt);
+      };
 
 
       renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
