@@ -1007,11 +1007,17 @@ function renderMarkers(
       // これで生成される画像の解像度が displaySize とぴったり一致し、
       // 後から引き伸ばされることがなくなる
       const coreSize = Math.round(displaySize / CLOUD_PADDING_RATIO);
-      icon = getCachedCloudIconUrl(count, colorCount, coreSize, seed);
+      // 🧪【切り分けテスト 2026-07-22】Canvas生成(toDataURL)が固まりの原因か
+      //    を検証するため、重い getCachedCloudIconUrl を一時的にバイパスし、
+      //    生成もキャッシュ計算も一切しない固定SVGに差し替える。
+      //    これで固まらなくなれば犯人はCanvas再生成の重さ（大改修不要）。
+      //    それでも固まればアノテーション方式自体の限界（大改修へ）。
+      void coreSize; void colorCount; void seed;
+      icon = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Ccircle cx='20' cy='20' r='20' fill='%23c8641e' fill-opacity='0.55'/%3E%3C/svg%3E";
     } else {
       displaySize = Math.min(Math.max(baseSize, minCoverageSize), MAX_CIRCLE_DISPLAY_SIZE_PX);
-      // 円モードは余白なしで、そのままdisplaySizeの解像度で生成する
-      icon = getCachedClusterIconUrl(count, displaySize);
+      // 🧪【切り分けテスト】円も同様に固定SVGへ（Canvas生成をバイパス）
+      icon = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Ccircle cx='20' cy='20' r='18' fill='%238b2500'/%3E%3C/svg%3E";
     }
 
     // ============================================================
