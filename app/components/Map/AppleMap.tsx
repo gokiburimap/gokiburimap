@@ -1116,6 +1116,8 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   const clusterIndexRef = useRef<Supercluster | null>(null);
   // 描き直しの入口（reports変更時などはこの参照を通して描き直す）
   const requestRenderRef = useRef<() => void>(() => {});
+  // ズームリセットのタッチ監視を、アンマウント時に解除するための参照
+  const touchCleanupRef = useRef<() => void>(() => {});
   const [reports, setReports] = useState<Report[]>([]);
 
   // ============================================================
@@ -1516,6 +1518,42 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         doRender();
       });
 
+      // ============================================================
+      // 🧹 ズームリセット復活・窓ゼロ版（2026-07-22）
+      //
+      // 【A/Bテストで確定した事実】
+      // ・リセットあり → 幻の指バグは出ない(実機で多数回確認)が、霧が固まる
+      // ・リセットなし → 固まりは消えるが、幻の指バグが復活(実機確認)
+      // ＝リセットは必要。ただし旧実装の「false→次フレームでtrue」の
+      //   16msの無効窓に次のピンチが割り込むと、region-change-endを発しない
+      //   ジェスチャーが生まれ、霧固まりを起こしていた(外部指摘と観測が一致)。
+      //
+      // 【今回】falseにした直後、同じ瞬間に同期でtrueへ戻す。窓は0ms。
+      // 割り込まれる隙間が構造的に存在しないため、固まりの発生条件が消える。
+      // MapKitのセッター副作用でタッチ帳簿の破棄は同期実行されるため、
+      // 幻の指の掃除効果は維持される想定。効かなければ次の手に進む。
+      // ============================================================
+      let fingersDown = 0;
+      const onTouchChange = (e: TouchEvent) => {
+        const before = fingersDown;
+        fingersDown = e.touches.length;
+        if (before > 0 && fingersDown === 0) {
+          try {
+            map.isZoomEnabled = false;
+            map.isZoomEnabled = true; // 同一同期ブロック内で即復帰(窓ゼロ)
+          } catch { /* noop */ }
+        }
+      };
+      const tOpt = { capture: true, passive: true } as AddEventListenerOptions;
+      document.addEventListener("touchstart", onTouchChange, tOpt);
+      document.addEventListener("touchend", onTouchChange, tOpt);
+      document.addEventListener("touchcancel", onTouchChange, tOpt);
+      touchCleanupRef.current = () => {
+        document.removeEventListener("touchstart", onTouchChange, tOpt);
+        document.removeEventListener("touchend", onTouchChange, tOpt);
+        document.removeEventListener("touchcancel", onTouchChange, tOpt);
+      };
+
       renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
       applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
       renderAdminPinsRef.current(map);
@@ -1597,6 +1635,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
     return () => {
       cancelled = true;
+      touchCleanupRef.current(); // ズームリセットのタッチ監視を解除
       if (mapRef.current) {
         mapRef.current.destroy();
         mapRef.current = null;
