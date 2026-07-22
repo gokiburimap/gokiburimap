@@ -1503,10 +1503,31 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
       let fingersDown = 0;
       let renderPending = false;
+      let pendingSafetyTimer: ReturnType<typeof setTimeout> | null = null;
+
+      // 凍結が解除されないまま固まるのを防ぐ保険。保留になったら、
+      // 一定時間後に「指が本当にまだ触れているか」を再確認し、
+      // 離れていれば強制的に描き直す。touchendの取りこぼしで凍結が
+      // 解けなくなっても、必ずここで復帰する。
+      const armPendingSafety = () => {
+        if (pendingSafetyTimer) clearTimeout(pendingSafetyTimer);
+        pendingSafetyTimer = setTimeout(() => {
+          pendingSafetyTimer = null;
+          if (renderPending && fingersDown === 0) {
+            renderPending = false;
+            doRender();
+          } else if (renderPending) {
+            // まだ指が触れている：もう一度だけ様子を見る
+            armPendingSafety();
+          }
+        }, 400);
+      };
+
       const requestRender = () => {
         if (fingersDown > 0) {
           // 指が触れている間は保留（凍結）。離れた瞬間に実行される。
           renderPending = true;
+          armPendingSafety(); // ★保険を仕掛ける
         } else {
           renderPending = false;
           doRender();
@@ -1554,6 +1575,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         if (fingersDown === 0 && renderPending) {
           // 全ての指が離れた：凍結していた描き直しをここで実行
           renderPending = false;
+          if (pendingSafetyTimer) { clearTimeout(pendingSafetyTimer); pendingSafetyTimer = null; }
           doRender();
         }
       };
