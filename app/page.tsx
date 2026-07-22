@@ -30,19 +30,41 @@ function TouchDebugHUD() {
         const im = (window as any).__mapForDebug?._impl;
         if (!im) return "(地図なし)";
         const out: string[] = [];
+
+        // ★MapKitが今「握っている」タッチ点の数を探す。
+        //   ブラウザの実際の指本数とズレていたら、それが取りこぼしの証拠。
+        //   MapKit内部の、タッチ点らしき配列/マップを総当たりで探す。
+        let mkTouches = "?";
+        try {
+          for (const k in im) {
+            if (/touch|pointer|finger|_active/i.test(k)) {
+              const v = im[k];
+              if (Array.isArray(v)) { mkTouches = `${k.slice(-16)}[${v.length}]`; break; }
+              if (v && typeof v === "object" && typeof v.size === "number") {
+                mkTouches = `${k.slice(-16)}{${v.size}}`; break;
+              }
+              if (v && typeof v === "object") {
+                const n = Object.keys(v).length;
+                if (n > 0 && n < 12) { mkTouches = `${k.slice(-16)}:${n}`; break; }
+              }
+            }
+          }
+        } catch { /* noop */ }
+        out.push(`MK握り=${mkTouches}`);
+
+        const span = (window as any).__mapForDebug?.region?.span?.latitudeDelta;
+        if (span != null) out.push(`SPAN=${Number(span).toFixed(5)}`);
+
         for (const k in im) {
-          if (/zoom|gestur|pinch|touch|drag|pan|scal|camera|anim|_is[A-Z]/i.test(k)) {
+          if (/gestur|pinch|drag|_isZoom|_isPan|scal/i.test(k)) {
             const v = im[k];
             if (v !== null && typeof v !== "object" && typeof v !== "function") {
-              const kk = k.length > 24 ? k.slice(-24) : k;
+              const kk = k.length > 22 ? k.slice(-22) : k;
               const vv = typeof v === "number" ? v.toFixed(2) : String(v);
               out.push(`${kk}=${vv}`);
             }
           }
         }
-        // span(ズーム率)も足す
-        const span = (window as any).__mapForDebug?.region?.span?.latitudeDelta;
-        if (span != null) out.unshift(`SPAN=${Number(span).toFixed(5)}`);
         return out.join("\n") || "(該当なし)";
       } catch {
         return "(読取失敗)";
