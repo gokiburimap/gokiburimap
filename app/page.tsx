@@ -56,6 +56,25 @@ function TouchDebugHUD() {
         if (span != null) out.push(`SPAN=${Number(span).toFixed(5)}`);
 
         // 🔬 描画回数・マーカー数・キャッシュ枚数（蓄積型固まりの検出用）
+        // 🔬 ジェスチャー系フラグを全部拾う（バグ時に固まるフラグ特定用）
+        //    _impl配下の boolean 値で、名前にジェスチャー系の語を含むもの、
+        //    または true になっているものを列挙する。
+        try {
+          const im2 = (window as any).__mapForDebug?._impl;
+          if (im2) {
+            const flags: string[] = [];
+            for (const k in im2) {
+              const v = im2[k];
+              if (typeof v === "boolean") {
+                if (v === true || /gestur|zoom|pan|drag|pinch|rotat|active|animat|interact|_is/i.test(k)) {
+                  flags.push(`${k.slice(-18)}=${v ? "T" : "f"}`);
+                }
+              }
+            }
+            if (flags.length) out.push("FLAGS:" + flags.join(" "));
+          }
+        } catch { /* noop */ }
+
         const rs = (window as any).__renderStats;
         if (rs) {
           out.push(`描画回数=${rs.count}`);
