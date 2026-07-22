@@ -1515,32 +1515,39 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       requestRenderRef.current = doRender;
 
       // ============================================================
-      // 🖐 ズームリセット（1本指ズーム対策）・静止後に掛ける版（2026-07-22）
+      // 🖐 ズームリセット（1本指対策）＋ 描き直しの多重入口（2026-07-22）
       //
-      // 【1本指ズームのバグ】iPhoneでピンチ後、1本指スライドがズームに化ける。
-      // 対策は isZoomEnabled を false→true するリセット。ただし——
+      // 【2つのバグと、その板挟み】
+      // ・1本指ズーム対策として isZoomEnabled の false→true リセットが要る。
+      // ・しかしリセットはMapKitの収束を乱し、region-change-end(霧・アイコンを
+      //   描き直す入口)を飛ばすことがある。飛ぶと霧/アイコンが固まる。
       //
-      // 【霧固まりとの因果（外部指摘＋実測で判明）】
-      // 旧版は「指が離れた瞬間」に即リセットしていた。しかし指を離した直後、
-      // MapKitはピンチの慣性収束アニメーションを内部で進めている。その最中に
-      // isZoomEnabledを切り替えると収束が中断され、本来出るはずの
-      // region-change-endが飛ぶ。region-change-endは霧・アイコンを描き直す
-      // 唯一の入口なので、飛ぶと霧が固まる（＝今日の固まりバグの正体）。
+      // 【今日までの失敗】「region-change-endを飛ばさない」ようリセットの
+      // タイミングを何度も変えたが、地図設定に触る以上いつか収束と衝突し、
+      // 飛びを完全には防げなかった。
       //
-      // 【修正】リセットを「指が離れた瞬間」ではなく「指が離れて、かつ地図の
-      // 動き(収束含む)が完全に終わってから」掛ける。収束を邪魔しないので
-      // region-change-endは正常に発火し（霧は固まらない）、そのうえで
-      // 1本指ズーム対策のリセットも掛かる（1本指ズームも出ない）。両立する。
-      //
-      // 実装：指が全部離れたらフラグを立て、次に region-change-end が来た
-      // （＝地図が静止した）ときにリセットを1回だけ実行する。
+      // 【方針転換】region-change-endが「飛んでも困らない」ようにする。
+      // 描き直しの入口を1つに頼らず、複数用意する：
+      //   (1) region-change-end（従来どおり・静止時）
+      //   (2) region-change-start（動き始め。ここでも描けば、endが飛んでも
+      //       次の操作の開始時に必ず追いつく＝固まったまま放置されない）
+      //   (3) 指を離した後の時間差ポーリング（数回、span変化を見て描き直す。
+      //       地図設定には一切触らず、ただ描くだけ＝収束を壊さない安全な保険）
+      // どれか1つが飛んでも、他が霧を最新化する。固まりの根を断つ。
+      // 1本指対策のリセットは「静止後に1回」の今の形を維持する。
       // ============================================================
       let fingersDown = 0;
       let resetArmed = false;
+      let lastRenderedSpan = 0;
 
-      map.addEventListener("region-change-end", () => {
+      const renderNow = () => {
         doRender();
-        // 指が離れた後の静止を確認できた → ここで安全にズームリセット
+        try { lastRenderedSpan = map.region.span.latitudeDelta; } catch { /* noop */ }
+      };
+
+      // (1) 静止時：描き直し＋（予約されていれば）静止後リセット
+      map.addEventListener("region-change-end", () => {
+        renderNow();
         if (resetArmed && fingersDown === 0) {
           resetArmed = false;
           try {
@@ -1552,13 +1559,36 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         }
       });
 
+      // (2) 動き始め：ここでも描く。前回のend が飛んでいても、次の操作開始で
+      //     必ず最新サイズに追いつくため、固まったまま残らない。
+      map.addEventListener("region-change-start", () => {
+        renderNow();
+      });
+
+      // (3) 指を離した後のポーリング保険：地図設定に触らず、span が
+      //     描画済みの値からズレていたら描き直すだけ。収束を壊さない。
+      const pollAfterTouch = () => {
+        let tries = 0;
+        const tick = () => {
+          tries += 1;
+          try {
+            const span = map.region.span.latitudeDelta;
+            if (lastRenderedSpan > 0 &&
+                Math.abs(span - lastRenderedSpan) / lastRenderedSpan > 0.02) {
+              renderNow(); // 取り残されていた → 追いつかせる
+            }
+          } catch { /* noop */ }
+          if (tries < 6 && fingersDown === 0) setTimeout(tick, 180); // 最大約1秒
+        };
+        setTimeout(tick, 180);
+      };
+
       const onTouchG = (e: TouchEvent) => {
         const before = fingersDown;
         fingersDown = e.touches.length;
         if (before > 0 && fingersDown === 0) {
-          // 指が全部離れた → 「次に地図が静止したらリセットする」と予約だけ。
-          // 即リセットはしない（収束アニメーションを壊さないため）。
-          resetArmed = true;
+          resetArmed = true;   // 静止後リセットを予約（1本指対策）
+          pollAfterTouch();    // 描き直しの取りこぼしを拾う保険を起動
         }
       };
       const gOpt = { capture: true, passive: true } as AddEventListenerOptions;
