@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Map from "./components/Map";
 import ReportSidebar from "./components/ReportSidebar";
+import HeaderMenu from "./components/HeaderMenu";
 
 type Step = "idle" | "selecting" | "dragging" | "inputting";
 
@@ -181,33 +182,21 @@ export default function Home() {
         flexShrink: 0,
         display: "flex",
         alignItems: "center",
+        justifyContent: "space-between",
         gap: 10,
       }}>
         {/* ============================================================
-            ★2026-07-19：デザイン確認用のダミー配置★
-            ☰＝ハンバーガーメニュー（まだ押しても何も起きない）
-            🪳アイコン＝roach-icon.png（高さはheightの数値で調整）
-            本実装（メニューの中身）は別途。不要になったら☰やimgの
-            ブロックを消すだけでよい。
+            ★2026-07-23：左＝🪳アイコン＋サイト名、右＝ハンバーガーメニュー
+            ハンバーガーメニュー本体（開閉・ドロワー・項目一覧）は
+            HeaderMenu.tsx に分離。項目の増減はそちらのMENU_ITEMSを編集。
            ============================================================ */}
-        <button
-          aria-label="メニュー（準備中）"
-          style={{
-            border: "none",
-            background: "transparent",
-            fontSize: "22px",
-            color: "#662510",
-            cursor: "pointer",
-            padding: "0 4px",
-            lineHeight: 1,
-          }}
-        >
-          ☰
-        </button>
-        <img src="/roach-icon.png" alt="" style={{ height: "22px", width: "auto" }} />
-        <h1 style={{ margin: 0, fontSize: "20px", fontWeight: "bold", color: "#292524" }}>
-          ゴキブリマップ
-        </h1>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <img src="/roach-icon.png" alt="" style={{ height: "22px", width: "auto" }} />
+          <h1 style={{ margin: 0, fontSize: "20px", fontWeight: "bold", color: "#292524" }}>
+            ゴキブリマップ
+          </h1>
+        </div>
+        <HeaderMenu />
       </header>
       {/*
         ★2026-07-20：touchAction:"none" ＝この領域のタッチをブラウザに
@@ -217,7 +206,19 @@ export default function Home() {
         タッチが打ち切られ、幻の指が再発する。これで横取りを全種類遮断。
         地図・凡例・Gボタンのタップ動作はJS処理なので影響なし。
       */}
-      <div style={{ flex: 1, position: "relative", touchAction: "none" }}>
+      <div
+        style={{
+          flex: 1,
+          position: "relative",
+          touchAction: "none",
+          // 地図上のUI文字（ズーム警告・タップ促し・白箱のボタン等）を
+          // 長押しで選択・コピーできないようにする。投稿フォームは別領域
+          // (ReportSidebar)なので、入力欄のコピー/ペーストには影響しない。
+          userSelect: "none",
+          WebkitUserSelect: "none",
+          WebkitTouchCallout: "none",
+        } as React.CSSProperties}
+      >
         <Map
           ref={mapRef}
           onMapClick={handleMapClick}
@@ -238,13 +239,15 @@ export default function Home() {
           adminKey={adminKey}
         />
 
-        {/* 🔑 管理者モードのバッジ（押すと管理画面に戻れる） */}
+        {/* 🔑 管理者モードのバッジ（押すと管理画面に戻れる）
+            ★位置：住所検索バーの「下」に置く。上部に表示しつつ検索バーと
+              被らないようにするための top 値。微調整はこの数値を変える。 */}
         {adminKey && (
           <a
             href="/admin"
             style={{
               position: "absolute",
-              top: 16,
+              top: 64,
               left: "50%",
               transform: "translateX(-50%)",
               background: "#662510",

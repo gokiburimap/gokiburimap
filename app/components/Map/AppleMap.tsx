@@ -1101,7 +1101,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   //   スマホ：左下（🍎リーガル表示の上）に固定・PCよりやや小さめ
   // font=文字サイズ / swatch=色見本の四角の大きさ / pad=箱の内側余白
   // ============================================================
-  const LEGEND_PC = { top: 72, right: 16, font: 14, swatch: 18, pad: "12px 16px", line: 1.9 };
+  const LEGEND_PC = { top: 12, right: 15, font: 15, swatch: 20, pad: "12px 20px", line: 2.0 };
   const LEGEND_SP = { bottom: 36, left: 10, font: 13, swatch: 16, pad: "10px 14px", line: 1.8 };
   const [legendCollapsed, setLegendCollapsed] = useState(false);
 
@@ -1169,6 +1169,51 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       box.appendChild(row);
     });
 
+
+    // ── 霧だけ非表示ボタン（データは残す。削除依頼物件に隣家の霧が
+    //    かかる場合などに、投稿を消さずに地図から隠す用途）──────────
+    const hideBtn = document.createElement("button");
+    let hidden = r.hidden === true;
+    const paintHideBtn = () => {
+      hideBtn.textContent = hidden ? "霧を再表示する" : "霧だけ非表示にする";
+      hideBtn.style.cssText =
+        "margin-top:8px;width:100%;background:transparent;color:#662510;border:1.5px solid #662510;padding:7px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;";
+    };
+    paintHideBtn();
+    hideBtn.onclick = async () => {
+      const next = !hidden;
+      hideBtn.disabled = true;
+      hideBtn.textContent = next ? "非表示にしています..." : "再表示しています...";
+      try {
+        const res = await fetch("/api/admin/reports", {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            "x-admin-key": adminKeyRef.current ?? "",
+          },
+          body: JSON.stringify({ id: r.id, hidden: next }),
+        });
+        if (!res.ok) {
+          hideBtn.disabled = false;
+          paintHideBtn();
+          hideBtn.textContent = "失敗しました。もう一度押してください";
+          return;
+        }
+        hidden = next;
+        r.hidden = next; // 手元の状態も更新（再度開いた時に正しく出す）
+        hideBtn.disabled = false;
+        paintHideBtn();
+        // 霧を最新化（非表示なら消える・再表示なら戻る）
+        fetchReports();
+        // 管理ピンも描き直してピンの色（📍⇔🟣）を即反映する
+        renderAdminPinsRef.current(map);
+      } catch {
+        hideBtn.disabled = false;
+        paintHideBtn();
+        hideBtn.textContent = "通信失敗。もう一度押してください";
+      }
+    };
+    box.appendChild(hideBtn);
 
     const delBtn = document.createElement("button");
     delBtn.textContent = "この投稿を削除";
@@ -1249,7 +1294,9 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
             div.style.lineHeight = "1";
             div.style.fontSize = "24px";
             div.style.filter = "drop-shadow(0 1px 2px rgba(0,0,0,0.4))";
-            div.textContent = "📍";
+            // 霧を非表示にした投稿は、通常の📍と区別できるよう🟡にする
+            // （紛らわしさ防止。黄色は地図上で目立つ）。通常は📍。
+            div.textContent = r.hidden === true ? "🟡" : "📍";
             // ★2026-07-20：📍も触覚ゼロにする。タッチに反応する物体の上で
             //   ピンチするとMapKitのタッチ帳簿が狂う問題の、最後の残存箇所。
             //   タップ判定は地図側single-tapの自前判定で行う（円と同方式）。
@@ -1349,9 +1396,13 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     // 取得カラムを id, lat, lng, nearby_count に絞る方針は従来通り
     // （地図に不要な情報をブラウザに配らない＋転送量削減）。
     // ============================================================
+    // hidden=true（管理者が「霧だけ非表示」にした投稿）は最初から取得しない。
+    // ＝地図に描かれない。データ自体は残るので、いつでも復活できる。
+    // 表示処理には一切触れないので、タッチ挙動に影響しない安全な方式。
     const { count, error: countError } = await supabase
       .from("reports")
-      .select("id", { count: "exact", head: true });
+      .select("id", { count: "exact", head: true })
+      .not("hidden", "is", true);
 
     if (countError) {
       console.error("reports件数取得エラー:", countError);
@@ -1369,6 +1420,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         supabase
           .from("reports")
           .select("id, lat, lng, nearby_count")
+          .not("hidden", "is", true)
           .order("id", { ascending: true })
           .range(i * PAGE_SIZE, (i + 1) * PAGE_SIZE - 1)
       )

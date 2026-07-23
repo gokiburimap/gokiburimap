@@ -43,6 +43,7 @@ interface AdminReport {
   lng: number;
   nearby_count: number;
   checked: boolean;
+  hidden?: boolean; // 🟡 霧だけ非表示（投稿データは残す）
   report_details: { address: string | null; detail: string | null } | null;
 }
 
@@ -63,6 +64,8 @@ export default function AdminPage() {
   // ---- タブ1：投稿チェック用 ----
   const [reports, setReports] = useState<AdminReport[]>([]);
   const [uncheckedOnly, setUncheckedOnly] = useState(false);
+  // 「霧を非表示にした投稿」だけを一覧するフィルタ
+  const [hiddenOnlyFilter, setHiddenOnlyFilter] = useState(false);
   const [radiusM, setRadiusM] = useState(30); // 禁止エリア化の半径(m)
   const [armedDeleteId, setArmedDeleteId] = useState<number | null>(null); // 2段階削除
 
@@ -448,9 +451,16 @@ export default function AdminPage() {
     return res;
   };
 
-  const loadReports = async (key = adminKey, unchecked = uncheckedOnly) => {
+  const loadReports = async (
+    key = adminKey,
+    unchecked = uncheckedOnly,
+    hiddenOnly = hiddenOnlyFilter
+  ) => {
+    const params: string[] = [];
+    if (unchecked) params.push("unchecked=1");
+    if (hiddenOnly) params.push("hidden=1");
     const res = await fetch(
-      `/api/admin/reports${unchecked ? "?unchecked=1" : ""}`,
+      `/api/admin/reports${params.length ? "?" + params.join("&") : ""}`,
       { headers: { "x-admin-key": key } }
     );
     if (res.status === 401) {
@@ -515,6 +525,32 @@ export default function AdminPage() {
     setReports((prev) =>
       prev.map((x) => (x.id === r.id ? { ...x, checked: !r.checked } : x))
     );
+  };
+
+  // 🟡 霧だけの非表示／再表示を切り替える。
+  //    投稿データは消さず、地図から霧だけを消す（いつでも戻せる）。
+  //    削除依頼物件に隣家の霧がかかる場合などに使う。
+  const toggleHidden = async (r: AdminReport) => {
+    const next = !r.hidden;
+    const res = await api("/api/admin/reports", {
+      method: "PATCH",
+      body: JSON.stringify({ id: r.id, hidden: next }),
+    });
+    if (res.ok) {
+      // 「非表示のみ表示」で絞り込み中に再表示した行は、一覧から外れるので除く
+      if (hiddenOnlyFilter && !next) {
+        setReports((prev) => prev.filter((x) => x.id !== r.id));
+      } else {
+        setReports((prev) =>
+          prev.map((x) => (x.id === r.id ? { ...x, hidden: next } : x))
+        );
+      }
+      setMessage(
+        next
+          ? `投稿 #${r.id} の霧を地図から隠しました（データは残っています）`
+          : `投稿 #${r.id} の霧を地図に戻しました`
+      );
+    }
   };
 
   // 投稿の削除（2段階：1回目で赤くなり、2回目で実行）
@@ -659,7 +695,7 @@ export default function AdminPage() {
             rel="noopener"
             style={{ ...btn(), textDecoration: "none", display: "inline-block" }}
           >
-            地図を管理者モードで開く（新しいタブ）
+            地図を管理者モードで開く
           </a>
           <button
             onClick={() => {
@@ -726,10 +762,22 @@ export default function AdminPage() {
                 checked={uncheckedOnly}
                 onChange={async (e) => {
                   setUncheckedOnly(e.target.checked);
-                  await loadReports(adminKey, e.target.checked);
+                  await loadReports(adminKey, e.target.checked, hiddenOnlyFilter);
                 }}
               />{" "}
               未チェックのみ表示
+            </label>
+            {/* 🟡 霧を非表示にした投稿だけを一覧する（地図では🟡ピンで表示される） */}
+            <label style={{ fontSize: 13, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={hiddenOnlyFilter}
+                onChange={async (e) => {
+                  setHiddenOnlyFilter(e.target.checked);
+                  await loadReports(adminKey, uncheckedOnly, e.target.checked);
+                }}
+              />{" "}
+              🟡霧を非表示にした投稿のみ
             </label>
             <label style={{ fontSize: 13 }}>
               禁止エリア化の半径：
@@ -769,8 +817,14 @@ export default function AdminPage() {
                     key={r.id}
                     style={{
                       borderBottom: "1px solid #eee",
-                      background: r.checked ? "#F7F5F4" : "transparent",
-                      color: r.checked ? SUB : TEXT,
+                      // 🟡霧を非表示にした行は薄い黄色（地図の🟡ピンと対応）。
+                      // それ以外はチェック済みならグレー、未チェックは白。
+                      background: r.hidden
+                        ? "#FFF9E6"
+                        : r.checked
+                        ? "#F7F5F4"
+                        : "transparent",
+                      color: r.checked && !r.hidden ? SUB : TEXT,
                     }}
                   >
                     <td style={{ padding: 8 }}>
@@ -796,6 +850,21 @@ export default function AdminPage() {
                     </td>
                     <td style={{ padding: 8, textAlign: "center" }}>{r.nearby_count}</td>
                     <td style={{ padding: 8, whiteSpace: "nowrap" }}>
+                      <button
+                        onClick={() => toggleHidden(r)}
+                        style={{
+                          ...btn(),
+                          marginRight: 6,
+                          background: r.hidden ? "#FFF4CC" : "transparent",
+                        }}
+                        title={
+                          r.hidden
+                            ? "地図に霧を再表示します"
+                            : "投稿は残したまま、地図の霧だけ消します"
+                        }
+                      >
+                        {r.hidden ? "🟡霧を戻す" : "霧を隠す"}
+                      </button>
                       <button
                         onClick={() => deleteReport(r)}
                         style={{

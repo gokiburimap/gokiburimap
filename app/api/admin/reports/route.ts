@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
     const { data, error } = await supabase
       .from("reports")
       .select(
-        "id, created_at, occurred_on, lat, lng, nearby_count, checked, report_details(address, detail)"
+        "id, created_at, occurred_on, lat, lng, nearby_count, checked, hidden, report_details(address, detail)"
       )
       .gte("lat", nLatMin)
       .lte("lat", nLatMax)
@@ -61,18 +61,23 @@ export async function GET(req: NextRequest) {
   }
 
   const uncheckedOnly = sp.get("unchecked") === "1";
+  // ?hidden=1 で「霧を非表示にした投稿」だけを一覧する（管理画面の一覧用）
+  const hiddenOnly = sp.get("hidden") === "1";
 
   // reportsとreport_detailsを外部キー経由で結合して取得
   let query = supabase
     .from("reports")
     .select(
-      "id, created_at, occurred_on, lat, lng, nearby_count, checked, report_details(address, detail)"
+      "id, created_at, occurred_on, lat, lng, nearby_count, checked, hidden, report_details(address, detail)"
     )
     .order("id", { ascending: false })
     .limit(200);
 
   if (uncheckedOnly) {
     query = query.eq("checked", false);
+  }
+  if (hiddenOnly) {
+    query = query.eq("hidden", true);
   }
 
   const { data, error } = await query;
@@ -95,17 +100,26 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
   const id = Number(body?.id);
-  if (!Number.isInteger(id) || id <= 0 || typeof body?.checked !== "boolean") {
+  if (!Number.isInteger(id) || id <= 0) {
+    return NextResponse.json({ error: "invalid_params" }, { status: 400 });
+  }
+
+  // checked（既読フラグ）と hidden（霧だけ非表示）のどちらか、または
+  // 両方を更新できる。指定されたフィールドだけを更新する。
+  const patch: { checked?: boolean; hidden?: boolean } = {};
+  if (typeof body?.checked === "boolean") patch.checked = body.checked;
+  if (typeof body?.hidden === "boolean") patch.hidden = body.hidden;
+  if (Object.keys(patch).length === 0) {
     return NextResponse.json({ error: "invalid_params" }, { status: 400 });
   }
 
   const supabase = getServiceClient();
   const { error } = await supabase
     .from("reports")
-    .update({ checked: body.checked })
+    .update(patch)
     .eq("id", id);
   if (error) {
-    console.error("チェック状態の更新に失敗:", error);
+    console.error("投稿の更新に失敗:", error);
     return NextResponse.json({ error: "internal_error" }, { status: 500 });
   }
   return NextResponse.json({ ok: true });
