@@ -175,16 +175,18 @@ export default function Home() {
       100dvh（実際に見えている高さ）にすると、常に画面内に収まる。
     */
     <main style={{ width: "100vw", height: "100dvh", display: "flex", flexDirection: "column", touchAction: "none" }}>
-      <header style={{
-        background: "white",
-        padding: "12px 16px",
-        borderBottom: "1px solid #eee",
-        flexShrink: 0,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 10,
-      }}>
+      <header
+        className="app-header"
+        style={{
+          background: "white",
+          borderBottom: "1px solid #eee",
+          flexShrink: 0,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+        }}
+      >
         {/* ============================================================
             ★2026-07-23：左＝🪳アイコン＋サイト名、右＝ハンバーガーメニュー
             ハンバーガーメニュー本体（開閉・ドロワー・項目一覧）は

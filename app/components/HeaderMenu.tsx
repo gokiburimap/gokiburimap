@@ -39,18 +39,18 @@ export default function HeaderMenu() {
 
   return (
     <>
-      {/* ハンバーガーボタン本体（テーマカラーの枠で囲った□） */}
+      {/* ハンバーガーボタン本体（A案：枠なし太字） */}
       <button
         aria-label={open ? "メニューを閉じる" : "メニューを開く"}
         onClick={() => setOpen((v) => !v)}
         style={{
           width: 32,
           height: 32,
-          border: "1.5px solid #662510",
-          borderRadius: 6,
+          border: "none",
           background: "transparent",
           color: "#662510",
-          fontSize: 16,
+          fontSize: 20,
+          fontWeight: 700,
           lineHeight: 1,
           cursor: "pointer",
           display: "flex",
