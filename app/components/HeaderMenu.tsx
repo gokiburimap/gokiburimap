@@ -30,7 +30,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
     <section>
       <h3
         style={{
-          fontSize: 15,
+          fontSize: 17,
           fontWeight: 700,
           color: "#292524",
           margin: "28px 0 12px",
@@ -71,14 +71,24 @@ function Paragraph({ children }: { children: ReactNode }) {
 
 function List({ children }: { children: ReactNode }) {
   return (
-    <ul style={{ margin: "0 0 8px", paddingLeft: 20 }}>{children}</ul>
+    <ul style={{ margin: "0 0 8px", padding: 0, listStyle: "none" }}>{children}</ul>
   );
 }
 
 function Item({ children }: { children: ReactNode }) {
   return (
-    <li style={{ fontSize: 14, lineHeight: 1.8, color: "#292524", marginBottom: 6 }}>
-      {children}
+    <li
+      style={{
+        display: "flex",
+        gap: 6,
+        fontSize: 14,
+        lineHeight: 1.8,
+        color: "#292524",
+        marginBottom: 6,
+      }}
+    >
+      <span style={{ flexShrink: 0 }}>・</span>
+      <span>{children}</span>
     </li>
   );
 }
@@ -135,21 +145,29 @@ function PrivacyPolicyContent() {
       </p>
 
       <Paragraph>
-        ゴキブリマップ（以下「本サービス」）は、ゴキブリの目撃情報を閲覧できる「投稿型の地図サービス」です。本サービスは、個人情報の保護に関する法律その他の関連法令を遵守し、収集する情報を適切に取り扱います。
+        ゴキブリマップ（以下「本サービス」）は、ゴキブリの目撃情報を閲覧できる「投稿型の地図サービス」です。本サービスは、個人情報の保護に関する法律、その他の関連法令を遵守し、収集する情報を適切に取り扱います。
       </Paragraph>
+
+      <hr
+        style={{
+          border: "none",
+          borderTop: "1px solid #eee",
+          margin: "20px 0 0",
+        }}
+      />
 
       <Section title="収集する情報">
         <Paragraph>
           本サービスでは、次の情報を収集します。氏名・メールアドレスなど、会員登録に伴う個人情報は一切収集していません。
         </Paragraph>
-        <SubHeading>投稿時に入力いただく情報</SubHeading>
+        <SubHeading>【投稿時に入力いただく情報】</SubHeading>
         <List>
           <Item>目撃した場所（緯度・経度）</Item>
           <Item>目撃した日付</Item>
           <Item>都道府県・市区町村・住所（地図タップ位置から自動取得し、ご自身で確認・修正いただいたもの）</Item>
           <Item>詳細コメント（任意）</Item>
         </List>
-        <SubHeading>投稿時にサーバー側で自動的に記録する情報</SubHeading>
+        <SubHeading>【投稿時に自動的に記録する情報】</SubHeading>
         <List>
           <Item>IPアドレス</Item>
           <Item>ブラウザ情報（ユーザーエージェント）</Item>
@@ -160,12 +178,12 @@ function PrivacyPolicyContent() {
       <Section title="公開される情報・公開されない情報">
         <List>
           <Item>
-            地図上で閲覧できるのは、複数の投稿をまとめて匿名化した「色分けされたエリア表示」のみです。個別の投稿地点を特定できる「ピン表示」は行っていません。
+            地図上には、複数の投稿をまとめて匿名化した「色分けエリア表示」のみを表示し、個別の投稿地点を特定できる「ピン表示」は行っていません。
           </Item>
           <Item>
-            住所や詳細コメントなど、場所の特定につながりうる情報は、公開用のデータとは別の領域で管理しており、外部から読み出すことはできない設計になっています。
+            住所や詳細コメントなど、場所の特定につながりうる情報は、公開用データとは別の領域で管理し、外部から読み出せない設計としています。
           </Item>
-          <Item>IPアドレス・ブラウザ情報を公開することはございません。運営者のみが閲覧できる状態で保管しております。</Item>
+          <Item>IPアドレス・ブラウザ情報は公開せず、運営者のみが閲覧できる状態で保管しています。</Item>
         </List>
       </Section>
 
@@ -220,13 +238,13 @@ function PrivacyPolicyContent() {
       <Section title="投稿の削除について">
         <List>
           <Item>
-            ご自身の投稿は、投稿直後にのみ表示される確認画面から削除することができます。この画面は一度閉じると再表示されませんので、あらかじめご了承ください。
+            ご自身の投稿は、投稿直後にのみ表示される確認画面から削除可能です。この画面は一度閉じると再表示されませんので、あらかじめご了承ください。
           </Item>
           <Item>
             上記の確認画面が表示されない場合や、他の投稿の削除をご希望の場合は、お問い合わせ窓口までご連絡ください。内容を確認のうえ対応いたします。
           </Item>
           <Item>削除対応後も、トラブル対応や法的紛争に備え、投稿内容を記録として保管する場合があります。</Item>
-          <Item>明らかな虚偽・悪意ある投稿と判断される場合は、運営の判断により地図上の表示から除外することがあります。</Item>
+          <Item>虚偽・悪意ある投稿と判断した場合は、運営の判断により地図上の表示から除外することがあります。</Item>
         </List>
       </Section>
 
@@ -269,7 +287,7 @@ function PrivacyPolicyContent() {
       {/* 最後のセクションは区切り線が不要なので、Sectionを使わず直接記述 */}
       <h3
         style={{
-          fontSize: 15,
+          fontSize: 17,
           fontWeight: 700,
           color: "#292524",
           margin: "28px 0 12px",
