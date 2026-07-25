@@ -939,7 +939,7 @@ function buildJustPostedCallout(
   container.appendChild(title);
 
   const note = document.createElement("p");
-  note.textContent = "この表示はあなたにだけ見えています。ページを閉じると霧に変わります。";
+  note.textContent = "内容に間違いがなければ「完了」を押してください。修正する場合は「取り消す」を押して、もう一度投稿してください。";
   note.style.cssText = "margin:0 0 10px;font-size:11px;color:#78716C;line-height:1.5;";
   container.appendChild(note);
 
