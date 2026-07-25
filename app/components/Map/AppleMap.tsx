@@ -933,13 +933,13 @@ function buildJustPostedCallout(
     "background:#FFFFFF;border-radius:12px;padding:14px 16px;box-shadow:0 4px 16px rgba(0,0,0,0.18);min-width:220px;max-width:280px;text-align:left;";
 
   const title = document.createElement("p");
-  title.textContent = "投稿しました";
+  title.textContent = "投稿を受け付けました";
   title.style.cssText =
     "margin:0 0 4px;font-size:14px;font-weight:700;color:#662510;letter-spacing:0.02em;";
   container.appendChild(title);
 
   const note = document.createElement("p");
-  note.textContent = "内容に間違いがなければ「完了」を押してください。修正する場合は「取り消す」を押して、もう一度投稿してください。";
+  note.textContent = "修正する場合は、投稿を取り消してから再投稿してください。";
   note.style.cssText = "margin:0 0 10px;font-size:11px;color:#78716C;line-height:1.5;";
   container.appendChild(note);
 
@@ -1018,7 +1018,7 @@ function buildJustPostedCallout(
   }
 
   const closeBtn = document.createElement("button");
-  closeBtn.textContent = "完了";
+  closeBtn.textContent = "閉じる";
   closeBtn.style.cssText =
     "margin-top:10px;width:100%;background:transparent;color:#662510;border:1.5px solid #662510;padding:7px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;";
   closeBtn.onclick = () => {
