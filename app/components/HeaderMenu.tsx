@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 // ============================================================
-// 🍔 ハンバーガーメニュー（2026-07-23 追加）
+// 🍔 ハンバーガーメニュー（2026-07-23 追加 / 2026-07-25 プライバシーポリシー本文を追加）
 //
 // 構成：
 //  ・ヘッダー右の□ボタン（テーマカラー枠）
@@ -12,24 +12,210 @@ import { useEffect, useState } from "react";
 //  ・ハンバーガー再タップでも閉じる
 //
 // メニュー項目はここの MENU_ITEMS 配列を編集するだけで増減できる。
-// 今は全部ダミーリンク（href="#"）。noteだけ外部タブで開く想定。
+// noteは実URL（https://note.com/gokiburimap）で外部タブに開く。
 // ============================================================
+
+// ------------------------------------------------------------
+// オーバーレイパネル本文用の小さな見た目パーツ
+// プライバシーポリシーのような長文・見出し付きの本文を、
+// ブランドカラーに沿って読みやすく表示するための共通スタイル。
+// ------------------------------------------------------------
+function SectionHeading({ children }: { children: ReactNode }) {
+  return (
+    <h3
+      style={{
+        fontSize: 15,
+        fontWeight: 700,
+        color: "#662510",
+        margin: "24px 0 8px",
+      }}
+    >
+      {children}
+    </h3>
+  );
+}
+
+function SubHeading({ children }: { children: ReactNode }) {
+  return (
+    <p style={{ fontSize: 14, fontWeight: 700, color: "#292524", margin: "16px 0 6px" }}>
+      {children}
+    </p>
+  );
+}
+
+function Paragraph({ children }: { children: ReactNode }) {
+  return (
+    <p style={{ fontSize: 14, lineHeight: 1.8, color: "#292524", margin: "0 0 8px" }}>
+      {children}
+    </p>
+  );
+}
+
+function List({ children }: { children: ReactNode }) {
+  return (
+    <ul style={{ margin: "0 0 8px", paddingLeft: 20 }}>{children}</ul>
+  );
+}
+
+function Item({ children }: { children: ReactNode }) {
+  return (
+    <li style={{ fontSize: 14, lineHeight: 1.8, color: "#292524", marginBottom: 6 }}>
+      {children}
+    </li>
+  );
+}
+
+// ------------------------------------------------------------
+// プライバシーポリシー本文
+// ★2026-07-25：相談・修正を重ねた最終版を反映。
+//   文言を直したいときはこの関数の中だけを編集すればよい。
+//   お問い合わせ先アドレスは EMAIL 変数を書き換えるだけで全箇所に反映される。
+// ------------------------------------------------------------
+const CONTACT_EMAIL = "gokiburimap@gmail.com";
+
+function PrivacyPolicyContent() {
+  return (
+    <>
+      <Paragraph>最終更新日：（公開日を記載）</Paragraph>
+      <Paragraph>
+        ゴキブリマップ（以下「本サービス」）は、ゴキブリの目撃情報を閲覧できる「投稿型の地図サービス」です。本サービスは、個人情報の保護に関する法律その他の関連法令を遵守し、収集する情報を適切に取り扱います。
+      </Paragraph>
+
+      <SectionHeading>収集する情報</SectionHeading>
+      <Paragraph>
+        本サービスでは、次の情報を収集します。氏名・メールアドレスなど、会員登録に伴う個人情報は一切収集していません。
+      </Paragraph>
+      <SubHeading>投稿時に入力いただく情報</SubHeading>
+      <List>
+        <Item>目撃した場所（緯度・経度）</Item>
+        <Item>目撃した日付</Item>
+        <Item>都道府県・市区町村・住所（地図タップ位置から自動取得し、ご自身で確認・修正いただいたもの）</Item>
+        <Item>詳細コメント（任意）</Item>
+      </List>
+      <SubHeading>投稿時にサーバー側で自動的に記録する情報</SubHeading>
+      <List>
+        <Item>IPアドレス</Item>
+        <Item>ブラウザ情報（ユーザーエージェント）</Item>
+        <Item>投稿日時</Item>
+      </List>
+
+      <SectionHeading>公開される情報・公開されない情報</SectionHeading>
+      <List>
+        <Item>
+          地図上で閲覧できるのは、複数の投稿をまとめて匿名化した「色分けされたエリア表示」のみです。個別の投稿地点を特定できる「ピン表示」は行っていません。
+        </Item>
+        <Item>
+          住所や詳細コメントなど、場所の特定につながりうる情報は、公開用のデータとは別の領域で管理しており、外部から読み出すことはできない設計になっています。
+        </Item>
+        <Item>IPアドレス・ブラウザ情報を公開することはございません。運営者のみが閲覧できる状態で保管しております。</Item>
+      </List>
+
+      <SectionHeading>利用目的</SectionHeading>
+      <Paragraph>収集した情報は、次の目的にのみ使用します。</Paragraph>
+      <List>
+        <Item>投稿内容を匿名化した地図表示として提供するため</Item>
+        <Item>不正な連続投稿を防ぐため</Item>
+        <Item>投稿に関するトラブル（名誉毀損等の申し立て、発信者情報開示請求など）が生じた際に、法令に基づき対応するため</Item>
+      </List>
+      <Paragraph>上記以外の目的で情報を利用することはありません。</Paragraph>
+
+      <SectionHeading>外部サービスの利用</SectionHeading>
+      <Paragraph>
+        本サービスは、次の外部サービスを利用しています。それぞれの情報の取り扱いは、各サービス提供者のプライバシーポリシーに基づきます。
+      </Paragraph>
+      <List>
+        <Item><strong>Apple MapKit JS</strong> — 地図の表示に利用しています。</Item>
+        <Item><strong>Yahoo! JAPAN リバースジオコーダAPI</strong> — タップした地点の住所を取得するために、位置情報（緯度・経度）を送信しています。</Item>
+        <Item><strong>Nominatim（OpenStreetMap）</strong> — 住所検索の候補表示のために、入力された検索キーワードを送信しています。</Item>
+        <Item><strong>Supabase</strong> — 投稿データの保存・配信を行うクラウド基盤として利用しています。</Item>
+        <Item>
+          <strong>Google Analytics</strong> — サイトの利用状況（アクセス数・閲覧ページなど）を把握するために利用しています。Cookieを使用してアクセス情報を取得し、Googleに送信しています。取得した情報の取り扱いはGoogleのプライバシーポリシーに準じます。
+        </Item>
+      </List>
+      <Paragraph>
+        なお、今後広告配信サービスを導入する場合があります。その際は、送信先・送信される情報・利用目的を明記のうえ、本ページを更新します。
+      </Paragraph>
+
+      <SectionHeading>第三者への提供</SectionHeading>
+      <Paragraph>収集した情報は、次の場合を除いて第三者に提供することはありません。</Paragraph>
+      <List>
+        <Item>法令に基づく開示請求など、法的な手続きに従う必要がある場合</Item>
+        <Item>利用者ご本人の同意がある場合</Item>
+      </List>
+      <Paragraph>情報を第三者に販売・貸与することは一切ありません。</Paragraph>
+
+      <SectionHeading>保存期間</SectionHeading>
+      <List>
+        <Item>
+          <strong>投稿内容（目撃場所・日付・コメント等）</strong> — 本サービスの性質上、原則として期限を定めず保存します。地図上の表示から除外した場合（削除依頼への対応等）も、トラブル対応や法的紛争に備え、記録として別途保管することがあります。
+        </Item>
+        <Item>
+          <strong>IPアドレス・ブラウザ情報・投稿日時</strong> — 投稿から<strong>1年間</strong>保存し、期間経過後は順次削除します。
+        </Item>
+      </List>
+
+      <SectionHeading>投稿の削除について</SectionHeading>
+      <List>
+        <Item>
+          ご自身の投稿は、投稿直後にのみ表示される確認画面から削除することができます。この画面は一度閉じると再表示されませんので、あらかじめご了承ください。
+        </Item>
+        <Item>
+          上記の確認画面が表示されない場合や、他の投稿の削除をご希望の場合は、お問い合わせ窓口までご連絡ください。内容を確認のうえ対応いたします。
+        </Item>
+        <Item>削除対応後も、トラブル対応や法的紛争に備え、投稿内容を記録として保管する場合があります。</Item>
+        <Item>明らかな虚偽・悪意ある投稿と判断される場合は、運営の判断により地図上の表示から除外することがあります。</Item>
+      </List>
+
+      <SectionHeading>投稿・情報に関するご本人の権利</SectionHeading>
+      <Paragraph>
+        本サービスは会員登録を伴わず、個人を特定する情報は原則として収集していません。ご自身の投稿内容について、次のご請求を受け付けています。
+      </Paragraph>
+      <List>
+        <Item><strong>投稿内容の訂正・削除の請求</strong> — 対象の投稿を特定できる情報（位置・日時・内容等）を添えてお問い合わせください。</Item>
+        <Item><strong>IPアドレス等の記録に関する利用停止・消去の請求</strong> — 内容を確認のうえ、可能な範囲で対応いたします。</Item>
+      </List>
+      <Paragraph>お問い合わせの際は、ご本人または投稿者であることを確認できる情報の提供をお願いする場合があります。</Paragraph>
+
+      <SectionHeading>セキュリティ対策</SectionHeading>
+      <Paragraph>
+        住所・詳細コメントなどの情報は、公開用のデータベースとは分離して保管し、外部から読み出せないようにしています。投稿の受付・削除などの処理は、運営側のみが利用できる仕組みを経由して行っています。
+      </Paragraph>
+
+      <SectionHeading>お問い合わせ</SectionHeading>
+      <Paragraph>
+        <a href={`mailto:${CONTACT_EMAIL}`} style={{ color: "#662510", textDecoration: "underline" }}>
+          {CONTACT_EMAIL}
+        </a>
+      </Paragraph>
+      <Paragraph>お問い合わせの内容によっては、ご返信できない場合がございますので、あらかじめご了承ください。</Paragraph>
+
+      <SectionHeading>ポリシーの変更について</SectionHeading>
+      <Paragraph>
+        本ポリシーは、サービス内容の変更や法令の改正等に応じて、予告なく変更する場合があります。変更後の内容は本ページに掲載します。
+      </Paragraph>
+
+      <SectionHeading>免責事項</SectionHeading>
+      <Paragraph>
+        本サービスに掲載される情報は、利用者の投稿に基づくものであり、正確性を保証するものではありません。本サービスの情報を利用したことにより生じた損害について、運営者は責任を負いません。
+      </Paragraph>
+    </>
+  );
+}
 
 // ============================================================
 // メニュー項目の定義
 //
 // kind: "modal" → 地図の上にオーバーレイパネルを重ねて表示（別ページに
 //        遷移しない。地図の状態(位置・ズーム等)を一切失わない）
-// kind: "link"  → 通常の<a>リンク（現状は投稿方法・プライバシーポリシーは
-//        まだページが無いのでダミー"#"のまま。noteだけ実URL・外部タブ）
+// kind: "link"  → 通常の<a>リンク（投稿方法はまだページが無いのでダミー
+//        "#"のまま。noteは実URL・外部タブ）
 //
-// ★2026-07-24：「このサイトについて」をテストとしてmodal化。
-//   中身(content)は仮テキスト。書き足すときはこのcontentを編集するだけでよい。
-//   他の項目も同じ要領でkind:"modal"に切り替え可能。
+// ★2026-07-25：「プライバシーポリシー」を本文込みでmodal化。
+//   文言を直すときは PrivacyPolicyContent() の中身を編集すればよい。
 // ============================================================
 type MenuItem =
   | { label: string; kind: "link"; href: string; external?: boolean }
-  | { label: string; kind: "modal"; modalKey: string; content: string };
+  | { label: string; kind: "modal"; modalKey: string; content: ReactNode };
 
 const MENU_ITEMS: MenuItem[] = [
   { label: "投稿方法", kind: "link", href: "#" },
@@ -40,7 +226,12 @@ const MENU_ITEMS: MenuItem[] = [
     content:
       "（ここは仮テキストです。後で本文に差し替えてください）\n\nゴキブリマップは、引っ越し前に物件・建物周辺のゴキブリ発生履歴を調べられる、ユーザー投稿型の地図サービスです。個別の建物を特定できないよう、複数件をまとめた匿名化された「霧」で目撃件数のおおまかな傾向だけをお見せする方式を採用しています。",
   },
-  { label: "プライバシーポリシー", kind: "link", href: "#" },
+  {
+    label: "プライバシーポリシー",
+    kind: "modal",
+    modalKey: "privacy",
+    content: <PrivacyPolicyContent />,
+  },
   { label: "note", kind: "link", href: "https://note.com/gokiburimap", external: true },
 ];
 
@@ -206,7 +397,7 @@ export default function HeaderMenu() {
       </div>
 
       {/* ============================================================
-          🗺️ オーバーレイパネル（2026-07-24 追加）
+          🗺️ オーバーレイパネル（2026-07-24 追加 / 07-25 本文組み込み）
           ★別ページに遷移せず、地図の上にそのまま重ねて表示する。
             <Map>コンポーネントは裏でマウントされたままなので、
             閉じれば位置・ズーム・霧の再描画キャッシュが一切失われない。
