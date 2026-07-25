@@ -394,6 +394,156 @@ function seededRandom(seed: number) {
 // ============================================================
 const OFFSET_MAX_METERS = 4;
 
+// ============================================================
+// 🌫️ 霧調整エリア（2026-07-22 追加）
+//
+// 【目的】削除依頼のあった建物に、隣家などの霧がかからないようにする。
+// このエリアに入った投稿は、霧を「建物と反対方向へずらし」「小さく」描く。
+// 投稿データ自体は一切変えない（描き方だけを変える）。
+//
+// 【なぜブラウザ側で判定するか】
+// 投稿は数千件になりうるが、エリアは数十個程度。投稿ごとにDBへ
+// 問い合わせると重いので、エリアの形（多角形）をまとめて受け取り、
+// ブラウザ内で「点がエリアの中か」を判定する。
+// さらに、まず外接矩形(bbox)で弾くので、ほとんどの投稿は一瞬で判定が済む。
+//
+// 【調整の効かせ方】
+//  ・方向：エリアに重なる投稿禁止エリア（建物）の中心から見て、投稿が
+//          外側へ逃げる向き（＝建物中心→投稿 の向き）。角なら斜めになる。
+//  ・距離：霧の半径ぶん外へずらす（＝霧の内側の端が、ほぼ投稿地点に来る）。
+//          これに margin_m を足し引きして微調整する。
+//  ・大きさ：size_scale 倍に縮める（0.7〜0.8推奨）。
+// ============================================================
+type FogAdjustArea = {
+  id: number;
+  name: string;
+  size_scale: number;
+  margin_m: number;
+  center_lat: number; // 「外向き」の基準点（建物の中心）
+  center_lng: number;
+  rings: { lat: number; lng: number }[][]; // 多角形の頂点（外周＋穴）
+  bbox: { minLat: number; maxLat: number; minLng: number; maxLng: number };
+};
+
+let fogAdjustAreas: FogAdjustArea[] = [];
+
+// GeoJSONの座標配列から、判定用の形とbboxを作る
+function buildFogArea(row: any): FogAdjustArea | null {
+  try {
+    const g = row.geojson;
+    if (!g) return null;
+    // Polygon（[[ [lng,lat], ... ]]）と MultiPolygon の両方に対応
+    const polys: any[] =
+      g.type === "MultiPolygon" ? g.coordinates.flat(1) : g.coordinates;
+    const rings = polys.map((ring: any[]) =>
+      ring.map((c: number[]) => ({ lng: c[0], lat: c[1] }))
+    );
+    let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+    rings.forEach((r) =>
+      r.forEach((p) => {
+        if (p.lat < minLat) minLat = p.lat;
+        if (p.lat > maxLat) maxLat = p.lat;
+        if (p.lng < minLng) minLng = p.lng;
+        if (p.lng > maxLng) maxLng = p.lng;
+      })
+    );
+    return {
+      id: row.id,
+      name: row.name,
+      size_scale: Number(row.size_scale ?? 0.75),
+      margin_m: Number(row.margin_m ?? 0),
+      center_lat: Number(row.center_lat),
+      center_lng: Number(row.center_lng),
+      rings,
+      bbox: { minLat, maxLat, minLng, maxLng },
+    };
+  } catch {
+    return null;
+  }
+}
+
+// 点が多角形の中にあるか（レイキャスティング法）
+function pointInRing(lat: number, lng: number, ring: { lat: number; lng: number }[]) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const yi = ring[i].lat, xi = ring[i].lng;
+    const yj = ring[j].lat, xj = ring[j].lng;
+    const intersect =
+      yi > lat !== yj > lat && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+// 指定地点が入っている調整エリアを返す（無ければnull）
+function findFogAdjustArea(lat: number, lng: number): FogAdjustArea | null {
+  for (const a of fogAdjustAreas) {
+    // まず外接矩形で高速に弾く
+    if (lat < a.bbox.minLat || lat > a.bbox.maxLat) continue;
+    if (lng < a.bbox.minLng || lng > a.bbox.maxLng) continue;
+    // 外周に入っていれば採用（穴の考慮は省略：運用上「回」の字の外周で足りる）
+    if (a.rings.length > 0 && pointInRing(lat, lng, a.rings[0])) return a;
+  }
+  return null;
+}
+
+// 調整エリアを「今見えている範囲ぶんだけ」サーバーから読み込む。
+// ★将来エリアが1万件規模になっても耐えるための設計：
+//   全件を持たず、地図に映っている範囲だけを取得する。
+//   同じ範囲を何度も取りに行かないよう、直前に取得した範囲を覚えておき、
+//   その中に収まっているうちは再取得しない。
+let fogAreaFetchedBounds: {
+  minLat: number; maxLat: number; minLng: number; maxLng: number;
+} | null = null;
+let fogAreaFetching = false;
+
+async function loadFogAdjustAreas(map: any): Promise<boolean> {
+  if (fogAreaFetching) return false;
+  try {
+    const span = map.region.span;
+    const c = map.region.center;
+    // 画面より少し広めに取る（少しパンしても再取得しなくて済むように）
+    const padLat = span.latitudeDelta * 0.75;
+    const padLng = span.longitudeDelta * 0.75;
+    const b = {
+      minLat: c.latitude - padLat,
+      maxLat: c.latitude + padLat,
+      minLng: c.longitude - padLng,
+      maxLng: c.longitude + padLng,
+    };
+
+    // 直前に取得した範囲に、今の表示範囲が収まっているなら再取得しない
+    const cur = fogAreaFetchedBounds;
+    const viewMinLat = c.latitude - span.latitudeDelta / 2;
+    const viewMaxLat = c.latitude + span.latitudeDelta / 2;
+    const viewMinLng = c.longitude - span.longitudeDelta / 2;
+    const viewMaxLng = c.longitude + span.longitudeDelta / 2;
+    if (
+      cur &&
+      viewMinLat >= cur.minLat && viewMaxLat <= cur.maxLat &&
+      viewMinLng >= cur.minLng && viewMaxLng <= cur.maxLng
+    ) {
+      return false; // 変化なし
+    }
+
+    fogAreaFetching = true;
+    const q = `?minLat=${b.minLat}&minLng=${b.minLng}&maxLat=${b.maxLat}&maxLng=${b.maxLng}`;
+    const res = await fetch("/api/admin/fog-areas" + q);
+    if (!res.ok) return false;
+    const json = await res.json();
+    fogAdjustAreas = (json.areas ?? [])
+      .map(buildFogArea)
+      .filter((a: FogAdjustArea | null): a is FogAdjustArea => a !== null);
+    fogAreaFetchedBounds = b;
+    return true; // 中身が更新された
+  } catch {
+    return false; // 取得失敗時は調整なしで通常表示
+  } finally {
+    fogAreaFetching = false;
+  }
+}
+
+
 function calcOffsetLatLng(seed: number, atLat: number) {
   // 雲の輪郭生成(seededRandom(seed))とは別系統の乱数列にするため、seed+1を使う
   const rand = seededRandom(seed + 1);
@@ -601,6 +751,21 @@ function calcCloudGrowthPx(count: number) {
 // この2つはセットで調整するもの、と覚えておけばよい。
 // ============================================================
 const MIN_COVERAGE_RADIUS_METERS = 120;
+
+// 画面1pxが現実世界で何メートルに相当するかを返す。
+// 霧調整エリアで「霧の半径ぶん外へずらす」距離を計算するのに使う。
+function calcMetersPerPixel(map: any, containerEl: HTMLDivElement | null): number {
+  if (!containerEl) return 0;
+  const span = map.region.span;
+  const centerLat = map.region.center.latitude;
+  const METERS_PER_DEGREE_LAT = 111320;
+  const metersPerDegreeLng = METERS_PER_DEGREE_LAT * Math.cos((centerLat * Math.PI) / 180);
+  const containerWidth = containerEl.clientWidth || 1;
+  const containerHeight = containerEl.clientHeight || 1;
+  const mLat = (span.latitudeDelta * METERS_PER_DEGREE_LAT) / containerHeight;
+  const mLng = (span.longitudeDelta * metersPerDegreeLng) / containerWidth;
+  return (mLat + mLng) / 2;
+}
 
 function calcMinCoverageSizePx(map: any, containerEl: HTMLDivElement | null): number {
   if (!containerEl) return 0;
@@ -954,11 +1119,11 @@ function renderMarkers(
     const seed = Math.abs(Math.round(lat * 1e6) * 1000003 + Math.round(lng * 1e6));
 
     // ★中心オフセット：実際の座標(lat, lng)から、seed固定でごくわずかにずらした
-    // 座標(offsetLat, offsetLng)を、表示・当たり判定の基準にする
+    // 座標(offsetLat, offsetLng)を、表示・当たり判定の基準にする。
+    // ※霧調整エリア内の投稿は、このあと外向きにさらにずらす（letにしてある）
     const { deltaLat, deltaLng } = calcOffsetLatLng(seed, lat);
-    const offsetLat = lat + deltaLat;
-    const offsetLng = lng + deltaLng;
-    const coordinate = new window.mapkit.Coordinate(offsetLat, offsetLng);
+    let offsetLat = lat + deltaLat;
+    let offsetLng = lng + deltaLng;
 
     const baseSize = calcCircleSize(count);
     const minCoverageSize = calcMinCoverageSizePx(map, containerEl);
@@ -1003,6 +1168,53 @@ function renderMarkers(
 
       displaySize = Math.min(displaySize, HARD_MAX_CLOUD_PX);
 
+      // ============================================================
+      // 🌫️ 霧調整エリアの適用（2026-07-22）
+      //
+      // この投稿が調整エリアの中にある場合、
+      //   ① 霧を size_scale 倍に縮める
+      //   ② 建物（エリアに重なる投稿禁止エリア）の中心から見て
+      //      外向きに、霧の半径ぶん＋margin_m だけ中心をずらす
+      // これで、霧が建物にかからなくなる。
+      //
+      // ★調整値の変更は、管理画面の霧調整エリアの登録内容
+      //   （大きさの倍率 size_scale／余裕 margin_m）で行う。
+      //   コード側の既定値は上の型定義の初期値とSQLのdefaultを参照。
+      // ============================================================
+      const area = findFogAdjustArea(lat, lng);
+      if (area) {
+        // ① 縮める
+        displaySize = Math.max(8, Math.round(displaySize * area.size_scale));
+
+        // ② 外向きにずらす。
+        //    ★重要：霧の画像には余白が含まれる（CLOUD_PADDING_RATIO=1.8）。
+        //      見た目の霧のふちは画像の端より内側にあるので、ずらす距離は
+        //      「画像サイズ÷2」ではなく「余白を除いた実際の半径」で計算する。
+        //      ここを画像サイズで計算すると2倍近くずれてしまう（修正済み）。
+        const metersPerPx = calcMetersPerPixel(map, containerEl);
+        const visibleRadiusPx = displaySize / 2 / CLOUD_PADDING_RATIO;
+        const radiusM = visibleRadiusPx * metersPerPx;
+        // margin_m は微調整用：0なら霧のふちが投稿地点に接する。
+        // マイナスにすると内側へ寄る（＝投稿地点に霧が重なる）。
+        const shiftM = Math.max(0, radiusM + area.margin_m);
+
+        // 建物の中心 → この投稿 の向き（＝外向き。角なら斜めになる）
+        let dLat = lat - area.center_lat;
+        let dLng = lng - area.center_lng;
+        // 緯度経度の1度あたりの距離差を補正して、実際の方角に合わせる
+        const latScale = 111320;
+        const lngScale = 111320 * Math.cos((lat * Math.PI) / 180);
+        const vx = dLng * lngScale;
+        const vy = dLat * latScale;
+        const len = Math.hypot(vx, vy);
+        if (len > 0.001) {
+          const ux = vx / len;
+          const uy = vy / len;
+          offsetLat += (uy * shiftM) / latScale;
+          offsetLng += (ux * shiftM) / lngScale;
+        }
+      }
+
       // 表示サイズから逆算して、余白を除いた「核」のサイズを渡す。
       // これで生成される画像の解像度が displaySize とぴったり一致し、
       // 後から引き伸ばされることがなくなる
@@ -1013,6 +1225,9 @@ function renderMarkers(
       // 円モードは余白なしで、そのままdisplaySizeの解像度で生成する
       icon = getCachedClusterIconUrl(count, displaySize);
     }
+
+    // 調整エリアによるずらしを反映した最終座標で、表示位置を決める
+    const coordinate = new window.mapkit.Coordinate(offsetLat, offsetLng);
 
     // ============================================================
     // マーカー生成（2026-07-22 シンプル化・引き算）
@@ -1175,7 +1390,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     const hideBtn = document.createElement("button");
     let hidden = r.hidden === true;
     const paintHideBtn = () => {
-      hideBtn.textContent = hidden ? "霧を再表示する" : "霧だけ非表示にする";
+      hideBtn.textContent = hidden ? "再表示する" : "非表示にする";
       hideBtn.style.cssText =
         "margin-top:8px;width:100%;background:transparent;color:#662510;border:1.5px solid #662510;padding:7px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;";
     };
@@ -1183,7 +1398,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     hideBtn.onclick = async () => {
       const next = !hidden;
       hideBtn.disabled = true;
-      hideBtn.textContent = next ? "非表示にしています..." : "再表示しています...";
+      hideBtn.textContent = next ? "処理中..." : "処理中...";
       try {
         const res = await fetch("/api/admin/reports", {
           method: "PATCH",
@@ -1503,6 +1718,17 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
         applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
         renderAdminPinsRef.current(map); // 管理者モード時のみ実際に描画される
+
+        // 🌫️ 表示範囲が変わっていれば、その範囲の霧調整エリアを取り直す。
+        //    中身が実際に変わったときだけ、もう一度だけ描き直す
+        //    （updatedがtrueのときは範囲キャッシュが更新済みなので、
+        //      次回は false が返り、無限ループにはならない）。
+        loadFogAdjustAreas(map).then((updated) => {
+          if (updated) {
+            renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
+            applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
+          }
+        });
       };
       requestRenderRef.current = doRender;
 
@@ -1557,6 +1783,11 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
       applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
       renderAdminPinsRef.current(map);
+
+      // 🌫️ 起動直後にも調整エリアを1回読み込む（以後はdoRender内で範囲追従）
+      loadFogAdjustAreas(map).then((updated) => {
+        if (updated && !cancelled && mapRef.current) doRender();
+      });
 
       map.addEventListener("single-tap", async (event: any) => {
         // ============================================================

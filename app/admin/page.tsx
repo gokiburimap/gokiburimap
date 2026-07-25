@@ -63,10 +63,13 @@ export default function AdminPage() {
 
   // ---- タブ1：投稿チェック用 ----
   const [reports, setReports] = useState<AdminReport[]>([]);
-  const [uncheckedOnly, setUncheckedOnly] = useState(false);
   // 「霧を非表示にした投稿」だけを一覧するフィルタ
   const [hiddenOnlyFilter, setHiddenOnlyFilter] = useState(false);
-  const [radiusM, setRadiusM] = useState(30); // 禁止エリア化の半径(m)
+  // 調整エリア（このエリア内の投稿は、表示を外向きにずらし・小さく描く）
+  const [fogAreas, setFogAreas] = useState<any[]>([]);
+  const [armedFogDeleteId, setArmedFogDeleteId] = useState<number | null>(null);
+  // 登録済みエリアの表示切替（投稿禁止エリア／調整エリア）
+  const [areaTab, setAreaTab] = useState<"banned" | "fog">("banned");
   const [armedDeleteId, setArmedDeleteId] = useState<number | null>(null); // 2段階削除
 
   // ---- タブ2：禁止エリア用 ----
@@ -411,6 +414,43 @@ export default function AdminPage() {
     }
   };
 
+  // 描いた形を「調整エリア」として登録する。
+  //    このエリアに入った投稿は、霧を外向きにずらし・小さくして描く。
+  //    大きさの倍率(0.75)と余裕(0m)は初期値で登録し、後から一覧で変更する。
+  const registerDrawnFogArea = async () => {
+    if (drawPoints.length < 3) {
+      setMessage("頂点を3つ以上タップしてください");
+      return;
+    }
+    if (!areaName.trim()) {
+      setMessage("先にエリア名を入力してください");
+      return;
+    }
+    if (!drawClosed) setDrawClosed(true);
+
+    const res = await api("/api/admin/fog-areas", {
+      method: "POST",
+      body: JSON.stringify({
+        name: areaName.trim(),
+        note: areaReason.trim() || null,
+        points: drawPoints, // [{lat, lng}, ...]
+        size_scale: 0.75,
+        margin_m: 0,
+      }),
+    });
+    if (res.ok) {
+      setMessage("調整エリアを登録しました（倍率0.75・余裕0mで登録。一覧で変更できます）");
+      setDrawPoints([]);
+      setDrawClosed(false);
+      setAreaName("");
+      setAreaReason("");
+      loadFogAreas();
+    } else {
+      const j = await res.json().catch(() => null);
+      setMessage("登録に失敗しました：" + (j?.detail ?? j?.error ?? "不明なエラー"));
+    }
+  };
+
   // クレーム対応：エリア内の既存投稿を全削除（2段階：1回目で赤くなり、2回目で実行）
   const purgeArea = async (id: number) => {
     if (armedPurgeId !== id) {
@@ -425,7 +465,7 @@ export default function AdminPage() {
     if (res.ok) {
       const json = await res.json();
       setMessage(
-        `エリア #${id} 内の投稿を${json.deleted}件削除しました（周辺の霧の色は自動で更新されます）`
+        `エリア #${id} 内の投稿を${json.deleted}件削除しました（周辺の表示は自動で更新されます）`
       );
     } else {
       setMessage("エリア内投稿の削除に失敗しました");
@@ -453,7 +493,7 @@ export default function AdminPage() {
 
   const loadReports = async (
     key = adminKey,
-    unchecked = uncheckedOnly,
+    unchecked = false,
     hiddenOnly = hiddenOnlyFilter
   ) => {
     const params: string[] = [];
@@ -483,6 +523,65 @@ export default function AdminPage() {
     setAreas(json.areas ?? []);
   };
 
+  // 調整エリアの一覧を読み込む
+  const loadFogAreas = async (key = adminKey) => {
+    try {
+      const res = await fetch("/api/admin/fog-areas", {
+        headers: { "x-admin-key": key },
+      });
+      if (!res.ok) {
+        setMessage("調整エリアの取得に失敗しました（" + res.status + "）");
+        return;
+      }
+      const json = await res.json();
+      if (json.error) {
+        setMessage("調整エリアの取得に失敗：" + json.error);
+        return;
+      }
+      setFogAreas(json.areas ?? []);
+    } catch (e: any) {
+      setMessage("調整エリアの取得で通信エラー：" + (e?.message ?? ""));
+    }
+  };
+
+  // 🌫️ 調整値（大きさの倍率・余裕）を更新する
+  const updateFogArea = async (
+    id: number,
+    patch: { size_scale?: number; margin_m?: number }
+  ) => {
+    const res = await api("/api/admin/fog-areas", {
+      method: "PATCH",
+      body: JSON.stringify({ id, ...patch }),
+    });
+    if (res.ok) {
+      setFogAreas((prev) =>
+        prev.map((a) => (a.id === id ? { ...a, ...patch } : a))
+      );
+      setMessage("調整値を更新しました（地図を再読み込みすると反映されます）");
+    } else {
+      setMessage("更新に失敗しました");
+    }
+  };
+
+  // 調整エリアを削除する（2段階：1回目で赤くなり、2回目で実行）
+  const deleteFogArea = async (id: number) => {
+    if (armedFogDeleteId !== id) {
+      setArmedFogDeleteId(id);
+      return;
+    }
+    setArmedFogDeleteId(null);
+    const res = await api("/api/admin/fog-areas", {
+      method: "DELETE",
+      body: JSON.stringify({ id }),
+    });
+    if (res.ok) {
+      setFogAreas((prev) => prev.filter((a) => a.id !== id));
+      setMessage("調整エリアを削除しました");
+    } else {
+      setMessage("削除に失敗しました");
+    }
+  };
+
   // 起動時：sessionStorageに合言葉が残っていれば自動ログイン
   useEffect(() => {
     const saved = localStorage.getItem("adminKey");
@@ -492,6 +591,7 @@ export default function AdminPage() {
         if (ok) {
           setAuthed(true);
           loadAreas(saved);
+          loadFogAreas(saved);
         }
       });
     }
@@ -515,43 +615,13 @@ export default function AdminPage() {
     localStorage.setItem("adminKey", key);
     setAuthed(true);
     loadAreas(key);
+    loadFogAreas(key);
   };
 
-  const toggleChecked = async (r: AdminReport) => {
-    await api("/api/admin/reports", {
-      method: "PATCH",
-      body: JSON.stringify({ id: r.id, checked: !r.checked }),
-    });
-    setReports((prev) =>
-      prev.map((x) => (x.id === r.id ? { ...x, checked: !r.checked } : x))
-    );
-  };
 
   // 🟡 霧だけの非表示／再表示を切り替える。
   //    投稿データは消さず、地図から霧だけを消す（いつでも戻せる）。
   //    削除依頼物件に隣家の霧がかかる場合などに使う。
-  const toggleHidden = async (r: AdminReport) => {
-    const next = !r.hidden;
-    const res = await api("/api/admin/reports", {
-      method: "PATCH",
-      body: JSON.stringify({ id: r.id, hidden: next }),
-    });
-    if (res.ok) {
-      // 「非表示のみ表示」で絞り込み中に再表示した行は、一覧から外れるので除く
-      if (hiddenOnlyFilter && !next) {
-        setReports((prev) => prev.filter((x) => x.id !== r.id));
-      } else {
-        setReports((prev) =>
-          prev.map((x) => (x.id === r.id ? { ...x, hidden: next } : x))
-        );
-      }
-      setMessage(
-        next
-          ? `投稿 #${r.id} の霧を地図から隠しました（データは残っています）`
-          : `投稿 #${r.id} の霧を地図に戻しました`
-      );
-    }
-  };
 
   // 投稿の削除（2段階：1回目で赤くなり、2回目で実行）
   const deleteReport = async (r: AdminReport) => {
@@ -566,33 +636,13 @@ export default function AdminPage() {
     });
     if (res.ok) {
       setReports((prev) => prev.filter((x) => x.id !== r.id));
-      setMessage(`投稿 #${r.id} を削除しました（周辺の霧の色は自動で更新されます）`);
+      setMessage(`投稿 #${r.id} を削除しました（周辺の表示は自動で更新されます）`);
     } else {
       setMessage(`投稿 #${r.id} の削除に失敗しました`);
     }
   };
 
   // イタズラ即応：この投稿の地点を中心に、円形の禁止エリアを登録
-  const excludeAround = async (r: AdminReport) => {
-    const res = await api("/api/admin/excluded-areas", {
-      method: "POST",
-      body: JSON.stringify({
-        name: `即応エリア（投稿#${r.id}周辺）`,
-        reason: "イタズラ対応",
-        lat: r.lat,
-        lng: r.lng,
-        radius_m: radiusM,
-      }),
-    });
-    if (res.ok) {
-      setMessage(
-        `投稿 #${r.id} の地点・半径${radiusM}mを禁止エリアにしました。投稿自体は残っているので、不要なら別途削除してください。`
-      );
-      loadAreas();
-    } else {
-      setMessage("禁止エリアの登録に失敗しました");
-    }
-  };
 
   const addGeojsonArea = async () => {
     if (!areaName.trim() || !areaGeojson.trim()) {
@@ -756,40 +806,17 @@ export default function AdminPage() {
               flexWrap: "wrap",
             }}
           >
-            <label style={{ fontSize: 13, cursor: "pointer" }}>
-              <input
-                type="checkbox"
-                checked={uncheckedOnly}
-                onChange={async (e) => {
-                  setUncheckedOnly(e.target.checked);
-                  await loadReports(adminKey, e.target.checked, hiddenOnlyFilter);
-                }}
-              />{" "}
-              未チェックのみ表示
-            </label>
-            {/* 🟡 霧を非表示にした投稿だけを一覧する（地図では🟡ピンで表示される） */}
+            {/* 非表示にした投稿だけに絞り込む（地図の🟡ピンと対応） */}
             <label style={{ fontSize: 13, cursor: "pointer" }}>
               <input
                 type="checkbox"
                 checked={hiddenOnlyFilter}
                 onChange={async (e) => {
                   setHiddenOnlyFilter(e.target.checked);
-                  await loadReports(adminKey, uncheckedOnly, e.target.checked);
+                  await loadReports(adminKey, false, e.target.checked);
                 }}
               />{" "}
-              🟡霧を非表示にした投稿のみ
-            </label>
-            <label style={{ fontSize: 13 }}>
-              禁止エリア化の半径：
-              <input
-                type="number"
-                value={radiusM}
-                min={5}
-                max={5000}
-                onChange={(e) => setRadiusM(Number(e.target.value))}
-                style={{ width: 70, padding: 4, marginLeft: 4 }}
-              />
-              m
+              非表示にした投稿
             </label>
             <button onClick={() => loadReports()} style={btn()}>
               再読込
@@ -798,16 +825,14 @@ export default function AdminPage() {
           </div>
 
           <div style={{ overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
+            <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13, tableLayout: "fixed" }}>
               <thead>
                 <tr style={{ borderBottom: `2px solid ${BRAND}`, textAlign: "left" }}>
-                  <th style={{ padding: 8 }}>✓</th>
-                  <th style={{ padding: 8 }}>#</th>
+                  <th style={{ padding: 8, width: 60 }}>#</th>
                   <th style={{ padding: 8 }}>投稿日時</th>
                   <th style={{ padding: 8 }}>目撃日</th>
                   <th style={{ padding: 8 }}>住所</th>
                   <th style={{ padding: 8 }}>詳細</th>
-                  <th style={{ padding: 8 }}>近隣件数</th>
                   <th style={{ padding: 8 }}>操作</th>
                 </tr>
               </thead>
@@ -827,14 +852,6 @@ export default function AdminPage() {
                       color: r.checked && !r.hidden ? SUB : TEXT,
                     }}
                   >
-                    <td style={{ padding: 8 }}>
-                      <input
-                        type="checkbox"
-                        checked={r.checked}
-                        onChange={() => toggleChecked(r)}
-                        title="チェック済みにする"
-                      />
-                    </td>
                     <td style={{ padding: 8 }}>{r.id}</td>
                     <td style={{ padding: 8, whiteSpace: "nowrap" }}>
                       {new Date(r.created_at).toLocaleString("ja-JP")}
@@ -842,29 +859,33 @@ export default function AdminPage() {
                     <td style={{ padding: 8, whiteSpace: "nowrap" }}>
                       {r.occurred_on ?? "-"}
                     </td>
-                    <td style={{ padding: 8, maxWidth: 220, wordBreak: "break-all" }}>
+                    <td
+                      style={{
+                        padding: 8,
+                        width: 240,
+                        maxWidth: 240,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                      title={r.report_details?.address ?? ""}
+                    >
                       {r.report_details?.address ?? "-"}
                     </td>
-                    <td style={{ padding: 8, maxWidth: 280, wordBreak: "break-all" }}>
+                    <td
+                      style={{
+                        padding: 8,
+                        width: 280,
+                        maxWidth: 280,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                      title={r.report_details?.detail ?? ""}
+                    >
                       {r.report_details?.detail ?? "-"}
                     </td>
-                    <td style={{ padding: 8, textAlign: "center" }}>{r.nearby_count}</td>
                     <td style={{ padding: 8, whiteSpace: "nowrap" }}>
-                      <button
-                        onClick={() => toggleHidden(r)}
-                        style={{
-                          ...btn(),
-                          marginRight: 6,
-                          background: r.hidden ? "#FFF4CC" : "transparent",
-                        }}
-                        title={
-                          r.hidden
-                            ? "地図に霧を再表示します"
-                            : "投稿は残したまま、地図の霧だけ消します"
-                        }
-                      >
-                        {r.hidden ? "🟡霧を戻す" : "霧を隠す"}
-                      </button>
                       <button
                         onClick={() => deleteReport(r)}
                         style={{
@@ -872,13 +893,9 @@ export default function AdminPage() {
                           color: "#fff",
                           background: armedDeleteId === r.id ? "#B3261E" : "#D9938B",
                           border: "none",
-                          marginRight: 6,
                         }}
                       >
                         {armedDeleteId === r.id ? "本当に削除" : "削除"}
-                      </button>
-                      <button onClick={() => excludeAround(r)} style={btn()}>
-                        禁止エリア化
                       </button>
                     </td>
                   </tr>
@@ -887,7 +904,7 @@ export default function AdminPage() {
             </table>
           </div>
           <p style={{ fontSize: 12, color: SUB, marginTop: 8 }}>
-            ・削除すると住所・詳細も一緒に消え、周辺の霧の色（近隣件数）は自動で更新されます。投稿記録（IP等）は開示請求対応のため残ります。
+            ・削除すると住所・詳細も一緒に消え、周辺の表示（近隣件数）は自動で更新されます。投稿記録（IP等）は開示請求対応のため残ります。
             <br />
             ・「禁止エリア化」はその投稿の地点を中心に、上で指定した半径の円形エリアを登録します。投稿自体は消えないので、必要なら削除も押してください。
           </p>
@@ -900,9 +917,6 @@ export default function AdminPage() {
       {tab === "areas" && (
         <section>
           <h2 style={{ fontSize: 16, marginBottom: 8 }}>新規登録</h2>
-          <p style={{ fontSize: 12, color: SUB, marginBottom: 8 }}>
-            まずエリア名（と理由）を入力してから、下のどちらかの方法で範囲を指定してください。
-          </p>
           <input
             value={areaName}
             onChange={(e) => setAreaName(e.target.value)}
@@ -932,13 +946,6 @@ export default function AdminPage() {
             }}
           />
 
-          {/* ============================================================
-              方法A（推奨）：地図上で建物の角をタップして囲う
-             ============================================================ */}
-          <h3 style={{ fontSize: 14, marginBottom: 6 }}>方法A（推奨）：地図上で建物を囲う</h3>
-          <p style={{ fontSize: 12, color: SUB, marginBottom: 8 }}>
-            建物の角を順にタップすると実線がつながっていきます。最後に<b>始点（赤い大きな印）</b>をクリックすると囲いが閉じて確定し、「この形で登録する」で登録できます。
-          </p>
           <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
             <input
               value={jumpQuery}
@@ -1007,7 +1014,13 @@ export default function AdminPage() {
               やり直し
             </button>
             <button onClick={registerDrawnPolygon} style={btn(true)}>
-              この形で登録する
+              投稿禁止エリアとして登録
+            </button>
+            {/* 🌫️ 同じ描いた形を、調整エリアとして登録する。
+                このエリア内の投稿は、霧を建物と反対向きにずらし・小さく描く。
+                倍率0.75・余裕0mの初期値で登録し、下の一覧で微調整する。 */}
+            <button onClick={registerDrawnFogArea} style={btn()}>
+              調整エリアとして登録
             </button>
             <span style={{ fontSize: 12, color: SUB }}>
               頂点：{drawPoints.length}個
@@ -1019,34 +1032,55 @@ export default function AdminPage() {
             </span>
           </div>
 
-          {/* ============================================================
-              方法B（予備）：geojson.ioで描いたGeoJSONの貼り付け
-             ============================================================ */}
-          <h3 style={{ fontSize: 14, margin: "24px 0 6px" }}>方法B（予備）：GeoJSONの貼り付け</h3>
-          <p style={{ fontSize: 12, color: SUB, marginBottom: 8 }}>
-            geojson.io などで作ったGeoJSON（FeatureCollection／Feature／Polygon）を貼り付けて登録できます。広域・複雑な形状用の予備手段です。
-          </p>
-          <textarea
-            value={areaGeojson}
-            onChange={(e) => setAreaGeojson(e.target.value)}
-            placeholder='GeoJSONを貼り付け（{"type":"FeatureCollection",...}）'
-            rows={5}
-            style={{
-              width: "100%",
-              padding: 10,
-              border: "1px solid #ccc",
-              borderRadius: 8,
-              fontSize: 12,
-              fontFamily: "monospace",
-              marginBottom: 8,
-              boxSizing: "border-box",
-            }}
-          />
-          <button onClick={addGeojsonArea} style={btn(true)}>
-            貼り付けた内容で登録する
-          </button>
+          {/* GeoJSON貼り付け（広域・複雑な形用の予備手段。普段は畳んでおく） */}
+          <details style={{ marginTop: 16 }}>
+            <summary style={{ fontSize: 13, cursor: "pointer", color: SUB }}>
+              GeoJSONを貼り付けて登録する
+            </summary>
+            <p style={{ fontSize: 12, color: SUB, margin: "8px 0" }}>
+              geojson.io などで作ったGeoJSON（FeatureCollection／Feature／Polygon）を貼り付けて、投稿禁止エリアとして登録します。
+            </p>
+            <textarea
+              value={areaGeojson}
+              onChange={(e) => setAreaGeojson(e.target.value)}
+              placeholder='GeoJSONを貼り付け'
+              rows={5}
+              style={{
+                width: "100%",
+                padding: 10,
+                border: "1px solid #ccc",
+                borderRadius: 8,
+                fontSize: 12,
+                fontFamily: "monospace",
+                marginBottom: 8,
+                boxSizing: "border-box",
+              }}
+            />
+            <button onClick={addGeojsonArea} style={btn()}>
+              この内容で登録する
+            </button>
+          </details>
 
+          {/* ============================================================
+              登録済みエリア（投稿禁止／調整をタブで切り替えて表示）
+             ============================================================ */}
           <h2 style={{ fontSize: 16, margin: "24px 0 8px" }}>登録済みエリア</h2>
+          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+            <button
+              onClick={() => setAreaTab("banned")}
+              style={btn(areaTab === "banned")}
+            >
+              投稿禁止エリア（{areas.length}）
+            </button>
+            <button
+              onClick={() => setAreaTab("fog")}
+              style={btn(areaTab === "fog")}
+            >
+              調整エリア（{fogAreas.length}）
+            </button>
+          </div>
+
+          {areaTab === "banned" ? (
           <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
             <thead>
               <tr style={{ borderBottom: `2px solid ${BRAND}`, textAlign: "left" }}>
@@ -1087,6 +1121,95 @@ export default function AdminPage() {
               ))}
             </tbody>
           </table>
+          ) : (
+            <div>
+          {/* ============================================================
+              調整エリアの一覧（調整値の変更・削除）
+             ============================================================ */}
+          <h3 style={{ fontSize: 14, margin: "24px 0 6px" }}>
+            調整エリアの一覧
+          </h3>
+          <p style={{ fontSize: 12, color: SUB, margin: "0 0 8px" }}>
+            ・このエリア内の投稿は、建物と反対の外向きにずらし、指定倍率で小さく表示します。投稿データは消えません。
+            <br />
+            ・<b>倍率</b>：小さいほど縮みます（0.7〜0.8推奨）。
+            <b>余裕(m)</b>：0で端が投稿地点に接します。プラスで離し、マイナスで重なります。
+            <br />
+            ・変更後、地図を再読み込みすると反映されます。
+          </p>
+          {fogAreas.length === 0 ? (
+            <p style={{ fontSize: 13, color: SUB }}>まだ登録がありません。</p>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ borderCollapse: "collapse", fontSize: 13, minWidth: 620 }}>
+                <thead>
+                  <tr style={{ borderBottom: "2px solid #ddd", textAlign: "left" }}>
+                    <th style={{ padding: 8 }}>ID</th>
+                    <th style={{ padding: 8 }}>エリア名</th>
+                    <th style={{ padding: 8 }}>メモ</th>
+                    <th style={{ padding: 8 }}>大きさの倍率</th>
+                    <th style={{ padding: 8 }}>余裕(m)</th>
+                    <th style={{ padding: 8 }}>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {fogAreas.map((a) => (
+                    <tr key={a.id} style={{ borderBottom: "1px solid #eee" }}>
+                      <td style={{ padding: 8 }}>{a.id}</td>
+                      <td style={{ padding: 8 }}>{a.name}</td>
+                      <td style={{ padding: 8, maxWidth: 200, wordBreak: "break-all" }}>
+                        {a.note ?? "-"}
+                      </td>
+                      <td style={{ padding: 8 }}>
+                        <input
+                          type="number"
+                          step={0.05}
+                          min={0.1}
+                          max={2}
+                          defaultValue={a.size_scale}
+                          onBlur={(e) => {
+                            const v = Number(e.target.value);
+                            if (v !== a.size_scale) updateFogArea(a.id, { size_scale: v });
+                          }}
+                          style={{ width: 70, padding: 4 }}
+                        />
+                      </td>
+                      <td style={{ padding: 8 }}>
+                        <input
+                          type="number"
+                          step={5}
+                          min={-500}
+                          max={500}
+                          defaultValue={a.margin_m}
+                          onBlur={(e) => {
+                            const v = Number(e.target.value);
+                            if (v !== a.margin_m) updateFogArea(a.id, { margin_m: v });
+                          }}
+                          style={{ width: 70, padding: 4 }}
+                        />
+                      </td>
+                      <td style={{ padding: 8, whiteSpace: "nowrap" }}>
+                        <button
+                          onClick={() => deleteFogArea(a.id)}
+                          style={{
+                            ...btn(),
+                            color: "#fff",
+                            background: armedFogDeleteId === a.id ? "#B3261E" : "#D9938B",
+                            border: "none",
+                          }}
+                        >
+                          {armedFogDeleteId === a.id ? "本当に削除" : "削除"}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+            </div>
+          )}
           <p style={{ fontSize: 12, color: SUB, marginTop: 8 }}>
             ・「エリア内の投稿を全削除」＝そのエリアの中にある既存投稿（霧）を一掃します。管理会社・オーナーからの削除依頼には、「①geojson.ioで建物の形を囲って登録 → ②このボタンで中の投稿を全削除」のセットで対応してください。以後、その建物への新規投稿も自動で拒否されます。
             <br />
