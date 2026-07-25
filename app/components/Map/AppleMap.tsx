@@ -1342,6 +1342,14 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   // ・削除するとfetchReports()を呼び直し、霧（nearby_count）も更新される
   // ============================================================
   const adminKeyRef = useRef<string | null | undefined>(adminKey);
+
+  // 🔎 管理者モードのエリア確認用（地図には描かず、下の帯に文字で出す）
+  const [hoverInfo, setHoverInfo] = useState<string>("地図の上にカーソルを置くと表示されます");
+  const [visibleAreas, setVisibleAreas] = useState<
+    { kind: string; id: number; name: string }[]
+  >([]);
+  const fetchVisibleAreasRef = useRef<() => void>(() => {});
+  const areaLookupCleanupRef = useRef<() => void>(() => {});
   const adminPinsRef = useRef<any[]>([]);
   const renderAdminPinsRef = useRef<(map: any) => void>(() => {});
 
@@ -1674,11 +1682,33 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         (window as any).__mapkitInitialized = true;
       }
 
+      // URLに lat/lng があれば、その場所を拡大して開く。
+      // 管理画面のエリア一覧の「地図で見る」から飛んできたとき用。
+      let initialRegion = new window.mapkit.CoordinateRegion(
+        new window.mapkit.Coordinate(36.5, 138.5),
+        new window.mapkit.CoordinateSpan(20, 24)
+      );
+      try {
+        const usp = new URLSearchParams(window.location.search);
+        const qLat = Number(usp.get("lat"));
+        const qLng = Number(usp.get("lng"));
+        if (
+          usp.get("lat") !== null &&
+          usp.get("lng") !== null &&
+          Number.isFinite(qLat) &&
+          Number.isFinite(qLng)
+        ) {
+          initialRegion = new window.mapkit.CoordinateRegion(
+            new window.mapkit.Coordinate(qLat, qLng),
+            new window.mapkit.CoordinateSpan(0.004, 0.004) // 建物が見える程度
+          );
+        }
+      } catch {
+        /* URLが読めない場合は既定の全国表示のまま */
+      }
+
       const map = new window.mapkit.Map(mapContainerRef.current, {
-        region: new window.mapkit.CoordinateRegion(
-          new window.mapkit.Coordinate(36.5, 138.5),
-          new window.mapkit.CoordinateSpan(20, 24)
-        ),
+        region: initialRegion,
         showsZoomControl: false,
         showsCompass: "hidden",
         isRotationEnabled: false,
@@ -1768,11 +1798,84 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       // ============================================================
       const SETTLE_MS = 500;
       let settleTimer: ReturnType<typeof setTimeout> | null = null;
+      // ============================================================
+      // 🔎 管理者モードのエリア確認（2026-07-22）
+      //
+      // 地図には図形を一切描かず、下の帯に文字で状況を出す。
+      //  ・範囲一覧：地図が止まったら、見えている範囲のエリア名を取得
+      //  ・カーソル判定：マウスが止まって0.3秒後に、その地点を判定
+      //    （動くたびに問い合わせると通信が多すぎるため）
+      // どちらも管理者モードのときだけ動く。
+      // ============================================================
+      const fetchVisibleAreas = async () => {
+        if (!adminKeyRef.current) return;
+        try {
+          const c = map.region.center;
+          const s = map.region.span;
+          const q =
+            `?minLat=${c.latitude - s.latitudeDelta / 2}` +
+            `&minLng=${c.longitude - s.longitudeDelta / 2}` +
+            `&maxLat=${c.latitude + s.latitudeDelta / 2}` +
+            `&maxLng=${c.longitude + s.longitudeDelta / 2}`;
+          const res = await fetch("/api/admin/area-lookup" + q, {
+            headers: { "x-admin-key": adminKeyRef.current },
+          });
+          if (!res.ok) return;
+          const json = await res.json();
+          setVisibleAreas(json.areas ?? []);
+        } catch {
+          /* 失敗時は前回の表示のままにする */
+        }
+      };
+
+      let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+      const onMapMouseMove = (ev: MouseEvent) => {
+        if (!adminKeyRef.current) return;
+        if (hoverTimer) clearTimeout(hoverTimer);
+        hoverTimer = setTimeout(async () => {
+          try {
+            const coord = map.convertPointOnPageToCoordinate(
+              new DOMPoint(ev.pageX, ev.pageY)
+            );
+            const res = await fetch(
+              `/api/admin/area-lookup?lat=${coord.latitude}&lng=${coord.longitude}`,
+              { headers: { "x-admin-key": adminKeyRef.current! } }
+            );
+            if (!res.ok) return;
+            const json = await res.json();
+            const hits = json.hits ?? [];
+            if (hits.length === 0) {
+              setHoverInfo("未設定（どのエリアにも入っていません）");
+            } else {
+              setHoverInfo(
+                hits
+                  .map(
+                    (h: any) =>
+                      (h.kind === "banned" ? "投稿禁止" : "調整") + "／" + h.name
+                  )
+                  .join("、")
+              );
+            }
+          } catch {
+            /* 失敗時は表示を変えない */
+          }
+        }, 300);
+      };
+      const mapEl = mapContainerRef.current;
+      if (mapEl) mapEl.addEventListener("mousemove", onMapMouseMove);
+      areaLookupCleanupRef.current = () => {
+        if (hoverTimer) clearTimeout(hoverTimer);
+        if (mapEl) mapEl.removeEventListener("mousemove", onMapMouseMove);
+      };
+      fetchVisibleAreasRef.current = fetchVisibleAreas;
+      fetchVisibleAreas(); // 起動時に1回
+
       map.addEventListener("region-change-end", () => {
         if (settleTimer) clearTimeout(settleTimer);
         settleTimer = setTimeout(() => {
           settleTimer = null;
           doRender();
+          fetchVisibleAreasRef.current(); // 帯の「この範囲のエリア」も更新
         }, SETTLE_MS);
       });
       // 次の操作が始まったら、予約中の作り直しは取り消す（操作中は作らない）
@@ -1800,6 +1903,35 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         // ============================================================
         if (!isSelectingRef.current && !reportPosRef.current) {
           const tapPt = event.pointOnPage;
+
+          // 🔎 管理者モード：タップ地点が登録エリア内かを帯に表示する
+          //    （スマホにはホバーが無いため、タップで同じ確認ができるように）
+          if (adminKeyRef.current) {
+            (async () => {
+              try {
+                const coord = map.convertPointOnPageToCoordinate(tapPt);
+                const res = await fetch(
+                  `/api/admin/area-lookup?lat=${coord.latitude}&lng=${coord.longitude}`,
+                  { headers: { "x-admin-key": adminKeyRef.current! } }
+                );
+                if (!res.ok) return;
+                const json = await res.json();
+                const hits = json.hits ?? [];
+                setHoverInfo(
+                  hits.length === 0
+                    ? "未設定（どのエリアにも入っていません）"
+                    : hits
+                        .map(
+                          (h: any) =>
+                            (h.kind === "banned" ? "投稿禁止" : "調整") + "／" + h.name
+                        )
+                        .join("、")
+                );
+              } catch {
+                /* 失敗時は表示を変えない */
+              }
+            })();
+          }
 
           // 📍管理者ピンのタップ判定（ピンも触覚ゼロ化したため自前判定。
           // 　視覚的に最前面なので、円より先に判定する）
@@ -1841,6 +1973,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
     return () => {
       cancelled = true;
+      areaLookupCleanupRef.current(); // エリア確認のマウス監視を解除
       if (mapRef.current) {
         mapRef.current.destroy();
         mapRef.current = null;
@@ -2213,7 +2346,9 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       {/*
         🎨 目撃件数の凡例（PC=右上・従来サイズ／スマホ=左下・やや小さめ）
         位置・サイズの微調整は、コンポーネント上部の LEGEND_PC / LEGEND_SP で行う。
+        ★管理者モードでは表示しない（エリア確認の帯を優先し、画面を広く使うため）
       */}
+      {!adminKey && (
       <div
         style={{
           position: "absolute",
@@ -2285,8 +2420,71 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
             </div>
           ))}
       </div>
+      )}
 
-      <div ref={mapContainerRef} style={{ width: "100%", height: "100%" }} />
+      {/* 地図本体。管理者モードのときは、下に確認用の帯を置くぶん高さを譲る */}
+      <div
+        ref={mapContainerRef}
+        style={{ width: "100%", height: adminKey ? "calc(100% - 96px)" : "100%" }}
+      />
+
+      {/* ============================================================
+          🔎 管理者モード専用：エリア確認の帯（2026-07-22）
+          地図には図形を一切描かず、文字だけで状況を伝える。
+          ・上段：カーソル（スマホはタップ）位置が、禁止／調整エリア内かどうか
+          ・下段：いま見えている範囲にある登録エリアの一覧
+          「ここ設定したっけ？」を、地図を汚さずに確認できるようにするもの。
+         ============================================================ */}
+      {adminKey && (
+        <div
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: 96,
+            boxSizing: "border-box",
+            background: "#FFFFFF",
+            borderTop: "1px solid #E7E5E4",
+            padding: "8px 12px",
+            fontSize: 12,
+            color: "#292524",
+            overflowY: "auto",
+            zIndex: 1200,
+          }}
+        >
+          <div style={{ marginBottom: 6 }}>
+            <span style={{ color: "#78716C", marginRight: 6 }}>カーソル位置：</span>
+            <span style={{ fontWeight: 700 }}>{hoverInfo}</span>
+          </div>
+          <div>
+            <span style={{ color: "#78716C", marginRight: 6 }}>
+              この範囲のエリア（{visibleAreas.length}）：
+            </span>
+            {visibleAreas.length === 0 ? (
+              <span style={{ color: "#78716C" }}>登録なし</span>
+            ) : (
+              visibleAreas.map((a, i) => (
+                <span
+                  key={a.kind + a.id}
+                  style={{
+                    display: "inline-block",
+                    marginRight: 8,
+                    marginBottom: 4,
+                    padding: "2px 8px",
+                    borderRadius: 10,
+                    background: a.kind === "banned" ? "#FDECEA" : "#FFF7E0",
+                    border:
+                      "1px solid " + (a.kind === "banned" ? "#E7B4AE" : "#E8D08A"),
+                  }}
+                >
+                  {a.kind === "banned" ? "禁止" : "調整"}／{a.name}
+                </span>
+              ))
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 });

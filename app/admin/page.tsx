@@ -419,11 +419,13 @@ export default function AdminPage() {
   //    大きさの倍率(0.75)と余裕(0m)は初期値で登録し、後から一覧で変更する。
   const registerDrawnFogArea = async () => {
     if (drawPoints.length < 3) {
-      setMessage("頂点を3つ以上タップしてください");
+      setMessage(
+        `調整エリアを登録できません：地図上の頂点が${drawPoints.length}個です（3個以上必要）`
+      );
       return;
     }
     if (!areaName.trim()) {
-      setMessage("先にエリア名を入力してください");
+      setMessage("調整エリアを登録できません：エリア名が空です（上の欄に入力してください）");
       return;
     }
     if (!drawClosed) setDrawClosed(true);
@@ -447,7 +449,11 @@ export default function AdminPage() {
       loadFogAreas();
     } else {
       const j = await res.json().catch(() => null);
-      setMessage("登録に失敗しました：" + (j?.detail ?? j?.error ?? "不明なエラー"));
+      setMessage(
+        "登録に失敗しました：" +
+          (j?.detail ?? j?.error ?? "不明なエラー") +
+          (j?.detailRpc ? " ／ 関数側：" + j.detailRpc : "")
+      );
     }
   };
 
@@ -523,6 +529,34 @@ export default function AdminPage() {
     setAreas(json.areas ?? []);
   };
 
+  // 各エリアの中心座標（一覧の「地図で見る」で使う）
+  const [areaCenters, setAreaCenters] = useState<
+    { kind: string; id: number; lat: number; lng: number }[]
+  >([]);
+
+  const loadAreaCenters = async (key = adminKey) => {
+    try {
+      const res = await fetch("/api/admin/area-lookup?centers=1", {
+        headers: { "x-admin-key": key },
+      });
+      if (!res.ok) return;
+      const json = await res.json();
+      setAreaCenters(json.centers ?? []);
+    } catch {
+      /* 取れなくても一覧の表示自体には影響しない */
+    }
+  };
+
+  // 指定エリアの場所を、管理者モードの地図で開く
+  const openAreaOnMap = (kind: string, id: number) => {
+    const c = areaCenters.find((x) => x.kind === kind && x.id === id);
+    if (!c) {
+      setMessage("このエリアの位置を取得できませんでした");
+      return;
+    }
+    window.open(`/?admin&lat=${c.lat}&lng=${c.lng}`, "_blank");
+  };
+
   // 調整エリアの一覧を読み込む
   const loadFogAreas = async (key = adminKey) => {
     try {
@@ -592,6 +626,7 @@ export default function AdminPage() {
           setAuthed(true);
           loadAreas(saved);
           loadFogAreas(saved);
+          loadAreaCenters(saved);
         }
       });
     }
@@ -616,6 +651,7 @@ export default function AdminPage() {
     setAuthed(true);
     loadAreas(key);
     loadFogAreas(key);
+    loadAreaCenters(key);
   };
 
 
@@ -1102,6 +1138,12 @@ export default function AdminPage() {
                   </td>
                   <td style={{ padding: 8, whiteSpace: "nowrap" }}>
                     <button
+                      onClick={() => openAreaOnMap("banned", a.id)}
+                      style={{ ...btn(), marginRight: 6 }}
+                    >
+                      地図で見る
+                    </button>
+                    <button
                       onClick={() => purgeArea(a.id)}
                       style={{
                         ...btn(),
@@ -1189,6 +1231,12 @@ export default function AdminPage() {
                         />
                       </td>
                       <td style={{ padding: 8, whiteSpace: "nowrap" }}>
+                        <button
+                          onClick={() => openAreaOnMap("fog", a.id)}
+                          style={{ ...btn(), marginRight: 6 }}
+                        >
+                          地図で見る
+                        </button>
                         <button
                           onClick={() => deleteFogArea(a.id)}
                           style={{
