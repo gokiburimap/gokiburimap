@@ -25,15 +25,29 @@ export async function GET(req: NextRequest) {
   // 表示範囲(bbox)が指定されていれば、その範囲に重なるエリアだけを返す。
   // ★将来エリアが1万件規模になっても耐えるための設計。全件は送らない。
   //   指定が無ければ全件（管理画面の一覧用）。
-  const minLat = Number(sp.get("minLat"));
-  const minLng = Number(sp.get("minLng"));
-  const maxLat = Number(sp.get("maxLat"));
-  const maxLng = Number(sp.get("maxLng"));
+  //
+  // ※注意：sp.get() は未指定のとき null を返し、Number(null) は 0 になる。
+  //   数値かどうかだけで判定すると「緯度0・経度0の範囲」を指定されたと
+  //   誤認し、海上を検索して常に0件になる（実際にこの不具合が起きた）。
+  //   そのため、まず「パラメータが存在するか」を確かめる。
+  const rawMinLat = sp.get("minLat");
+  const rawMinLng = sp.get("minLng");
+  const rawMaxLat = sp.get("maxLat");
+  const rawMaxLng = sp.get("maxLng");
   const hasBbox =
-    Number.isFinite(minLat) &&
-    Number.isFinite(minLng) &&
-    Number.isFinite(maxLat) &&
-    Number.isFinite(maxLng);
+    rawMinLat !== null &&
+    rawMinLng !== null &&
+    rawMaxLat !== null &&
+    rawMaxLng !== null &&
+    Number.isFinite(Number(rawMinLat)) &&
+    Number.isFinite(Number(rawMinLng)) &&
+    Number.isFinite(Number(rawMaxLat)) &&
+    Number.isFinite(Number(rawMaxLng));
+
+  const minLat = Number(rawMinLat);
+  const minLng = Number(rawMinLng);
+  const maxLat = Number(rawMaxLat);
+  const maxLng = Number(rawMaxLng);
 
   const { data, error } = await supabase.rpc(
     "fog_adjust_areas_geojson",
