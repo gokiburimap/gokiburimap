@@ -10,7 +10,7 @@
 //            ※このGETだけは管理者以外（一般の地図）も使うため、認証不要。
 //              返すのは「エリアの形と調整値」だけで、投稿データは含まない。
 // ・POST   ：エリアの登録（描画ツールで作った多角形）。管理者のみ。
-// ・DELETE ：エリアの削除。管理者のみ。
+// ・DELETE ：エリアの削除。管理者のみです。
 // ============================================================
 import { NextRequest, NextResponse } from "next/server";
 import { getServiceClient } from "@/app/lib/supabase-server";
