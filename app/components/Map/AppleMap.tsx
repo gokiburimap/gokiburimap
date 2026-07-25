@@ -1343,13 +1343,13 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   // ============================================================
   const adminKeyRef = useRef<string | null | undefined>(adminKey);
 
-  // 🔎 管理者モードのエリア確認用（地図には描かず、下の帯に文字で出す）
-  const [hoverInfo, setHoverInfo] = useState<string>("地図の上にカーソルを置くと表示されます");
-  const [visibleAreas, setVisibleAreas] = useState<
-    { kind: string; id: number; name: string }[]
-  >([]);
-  const fetchVisibleAreasRef = useRef<() => void>(() => {});
-  const areaLookupCleanupRef = useRef<() => void>(() => {});
+  // 🗺 管理者モード：エリアの形を線で表示するかどうか（初期はオフ）
+  const [showAreas, setShowAreas] = useState(false);
+  const showAreasRef = useRef(false);
+  const areaOverlaysRef = useRef<any[]>([]);
+  const drawAreaShapesRef = useRef<() => void>(() => {});
+  const drawAreaShapesNowRef = useRef<() => void>(() => {});
+
   const adminPinsRef = useRef<any[]>([]);
   const renderAdminPinsRef = useRef<(map: any) => void>(() => {});
 
@@ -1550,6 +1550,12 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     if (mapRef.current) renderAdminPinsRef.current(mapRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adminKey]);
+
+  // 🗺 「エリアを表示」の切り替えを、すぐ地図に反映する
+  useEffect(() => {
+    showAreasRef.current = showAreas;
+    drawAreaShapesNowRef.current();
+  }, [showAreas]);
   const onOutOfServiceRef = useRef(onOutOfService);
 
   // ============================================================
@@ -1798,22 +1804,46 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       // ============================================================
       const SETTLE_MS = 500;
       let settleTimer: ReturnType<typeof setTimeout> | null = null;
+
       // ============================================================
-      // 🔎 管理者モードのエリア確認（2026-07-22）
+      // 🗺 エリアの形を線で描く（2026-07-22・管理者モード限定）
       //
-      // 地図には図形を一切描かず、下の帯に文字で状況を出す。
-      //  ・範囲一覧：地図が止まったら、見えている範囲のエリア名を取得
-      //  ・カーソル判定：マウスが止まって0.3秒後に、その地点を判定
-      //    （動くたびに問い合わせると通信が多すぎるため）
-      // どちらも管理者モードのときだけ動く。
+      // 新しく範囲を設定するとき、既存のエリアと重ならないよう確認するため
+      // の機能。「エリアを表示」がオンのときだけ、今見えている範囲の
+      // 禁止エリア・調整エリアを線で描く。
+      //
+      // ・投稿禁止エリア＝赤の線／調整エリア＝オレンジの線
+      // ・線は太め。塗りつぶしは薄くして、地図が読めるようにする
+      // ・タッチには反応させない（地図の操作を妨げない・不具合の予防）
+      // ・数は多くても数十本で、描き直す頻度も低いため動作は軽い
+      // ・描き直しは AREA_SETTLE_MS(0.8秒) 静止してから1回だけ
       // ============================================================
-      const fetchVisibleAreas = async () => {
-        if (!adminKeyRef.current) return;
+      const AREA_SETTLE_MS = 800;
+      let areaShapeTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const clearAreaShapes = () => {
+        if (areaOverlaysRef.current.length > 0) {
+          try {
+            map.removeOverlays(areaOverlaysRef.current);
+          } catch {
+            /* すでに外れている場合は何もしない */
+          }
+          areaOverlaysRef.current = [];
+        }
+      };
+
+      const drawAreaShapes = async () => {
+        // オフ、または管理者モードでなければ、描いてあるものを消して終了
+        if (!showAreasRef.current || !adminKeyRef.current) {
+          clearAreaShapes();
+          return;
+        }
         try {
           const c = map.region.center;
           const s = map.region.span;
           const q =
-            `?minLat=${c.latitude - s.latitudeDelta / 2}` +
+            `?shapes=1` +
+            `&minLat=${c.latitude - s.latitudeDelta / 2}` +
             `&minLng=${c.longitude - s.longitudeDelta / 2}` +
             `&maxLat=${c.latitude + s.latitudeDelta / 2}` +
             `&maxLng=${c.longitude + s.longitudeDelta / 2}`;
@@ -1822,60 +1852,61 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
           });
           if (!res.ok) return;
           const json = await res.json();
-          setVisibleAreas(json.areas ?? []);
+          const rows: any[] = json.areas ?? [];
+
+          clearAreaShapes();
+          const overlays: any[] = [];
+
+          rows.forEach((row) => {
+            const g = row.geojson;
+            if (!g) return;
+            // Polygon と MultiPolygon の両方に対応
+            const polys: any[] =
+              g.type === "MultiPolygon" ? g.coordinates : [g.coordinates];
+
+            polys.forEach((rings: any[]) => {
+              const points = (rings[0] ?? []).map(
+                (c2: number[]) => new window.mapkit.Coordinate(c2[1], c2[0])
+              );
+              if (points.length < 3) return;
+
+              const isBanned = row.kind === "banned";
+              const overlay = new window.mapkit.PolygonOverlay([points], {
+                style: new window.mapkit.Style({
+                  strokeColor: isBanned ? "#D32F2F" : "#F57C00",
+                  strokeOpacity: 1,
+                  lineWidth: 4, // 太めにして見やすく
+                  fillColor: isBanned ? "#D32F2F" : "#F57C00",
+                  fillOpacity: 0.12, // 地図が読める程度の薄い塗り
+                }),
+              });
+              // タッチに反応させない（地図操作の妨げ・不具合の予防）
+              overlay.enabled = false;
+              overlays.push(overlay);
+            });
+          });
+
+          if (overlays.length > 0) {
+            map.addOverlays(overlays);
+            areaOverlaysRef.current = overlays;
+          }
         } catch {
-          /* 失敗時は前回の表示のままにする */
+          /* 失敗しても地図の表示自体には影響させない */
         }
       };
 
-      let hoverTimer: ReturnType<typeof setTimeout> | null = null;
-      const onMapMouseMove = (ev: MouseEvent) => {
-        if (!adminKeyRef.current) return;
-        if (hoverTimer) clearTimeout(hoverTimer);
-        hoverTimer = setTimeout(async () => {
-          try {
-            const coord = map.convertPointOnPageToCoordinate(
-              new DOMPoint(ev.pageX, ev.pageY)
-            );
-            const res = await fetch(
-              `/api/admin/area-lookup?lat=${coord.latitude}&lng=${coord.longitude}`,
-              { headers: { "x-admin-key": adminKeyRef.current! } }
-            );
-            if (!res.ok) return;
-            const json = await res.json();
-            const hits = json.hits ?? [];
-            if (hits.length === 0) {
-              setHoverInfo("未設定（どのエリアにも入っていません）");
-            } else {
-              setHoverInfo(
-                hits
-                  .map(
-                    (h: any) =>
-                      (h.kind === "banned" ? "投稿禁止" : "調整") + "／" + h.name
-                  )
-                  .join("、")
-              );
-            }
-          } catch {
-            /* 失敗時は表示を変えない */
-          }
-        }, 300);
+      drawAreaShapesRef.current = () => {
+        if (areaShapeTimer) clearTimeout(areaShapeTimer);
+        areaShapeTimer = setTimeout(drawAreaShapes, AREA_SETTLE_MS);
       };
-      const mapEl = mapContainerRef.current;
-      if (mapEl) mapEl.addEventListener("mousemove", onMapMouseMove);
-      areaLookupCleanupRef.current = () => {
-        if (hoverTimer) clearTimeout(hoverTimer);
-        if (mapEl) mapEl.removeEventListener("mousemove", onMapMouseMove);
-      };
-      fetchVisibleAreasRef.current = fetchVisibleAreas;
-      fetchVisibleAreas(); // 起動時に1回
+      drawAreaShapesNowRef.current = drawAreaShapes;
 
       map.addEventListener("region-change-end", () => {
         if (settleTimer) clearTimeout(settleTimer);
         settleTimer = setTimeout(() => {
           settleTimer = null;
           doRender();
-          fetchVisibleAreasRef.current(); // 帯の「この範囲のエリア」も更新
+          drawAreaShapesRef.current(); // エリアの線も追従させる
         }, SETTLE_MS);
       });
       // 次の操作が始まったら、予約中の作り直しは取り消す（操作中は作らない）
@@ -1904,34 +1935,6 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         if (!isSelectingRef.current && !reportPosRef.current) {
           const tapPt = event.pointOnPage;
 
-          // 🔎 管理者モード：タップ地点が登録エリア内かを帯に表示する
-          //    （スマホにはホバーが無いため、タップで同じ確認ができるように）
-          if (adminKeyRef.current) {
-            (async () => {
-              try {
-                const coord = map.convertPointOnPageToCoordinate(tapPt);
-                const res = await fetch(
-                  `/api/admin/area-lookup?lat=${coord.latitude}&lng=${coord.longitude}`,
-                  { headers: { "x-admin-key": adminKeyRef.current! } }
-                );
-                if (!res.ok) return;
-                const json = await res.json();
-                const hits = json.hits ?? [];
-                setHoverInfo(
-                  hits.length === 0
-                    ? "未設定（どのエリアにも入っていません）"
-                    : hits
-                        .map(
-                          (h: any) =>
-                            (h.kind === "banned" ? "投稿禁止" : "調整") + "／" + h.name
-                        )
-                        .join("、")
-                );
-              } catch {
-                /* 失敗時は表示を変えない */
-              }
-            })();
-          }
 
           // 📍管理者ピンのタップ判定（ピンも触覚ゼロ化したため自前判定。
           // 　視覚的に最前面なので、円より先に判定する）
@@ -1973,7 +1976,6 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
     return () => {
       cancelled = true;
-      areaLookupCleanupRef.current(); // エリア確認のマウス監視を解除
       if (mapRef.current) {
         mapRef.current.destroy();
         mapRef.current = null;
@@ -2422,69 +2424,69 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       </div>
       )}
 
-      {/* 地図本体。管理者モードのときは、下に確認用の帯を置くぶん高さを譲る */}
-      <div
-        ref={mapContainerRef}
-        style={{ width: "100%", height: adminKey ? "calc(100% - 96px)" : "100%" }}
-      />
-
       {/* ============================================================
-          🔎 管理者モード専用：エリア確認の帯（2026-07-22）
-          地図には図形を一切描かず、文字だけで状況を伝える。
-          ・上段：カーソル（スマホはタップ）位置が、禁止／調整エリア内かどうか
-          ・下段：いま見えている範囲にある登録エリアの一覧
-          「ここ設定したっけ？」を、地図を汚さずに確認できるようにするもの。
+          🗺 管理者モード専用：エリアの線表示の切り替えと色の凡例
+          新しく範囲を設定するとき、既存エリアとの重複を防ぐために使う。
+          初期はオフ。オンのときだけ線を描くので、普段は負荷ゼロ。
          ============================================================ */}
       {adminKey && (
         <div
           style={{
             position: "absolute",
-            left: 0,
-            right: 0,
-            bottom: 0,
-            height: 96,
-            boxSizing: "border-box",
-            background: "#FFFFFF",
-            borderTop: "1px solid #E7E5E4",
-            padding: "8px 12px",
-            fontSize: 12,
-            color: "#292524",
-            overflowY: "auto",
+            top: 12,
+            right: 15,
             zIndex: 1200,
+            background: "rgba(255,255,255,0.96)",
+            border: "1px solid #E7E5E4",
+            borderRadius: 10,
+            padding: "10px 14px",
+            fontSize: 13,
+            color: "#292524",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
+            userSelect: "none",
           }}
         >
-          <div style={{ marginBottom: 6 }}>
-            <span style={{ color: "#78716C", marginRight: 6 }}>カーソル位置：</span>
-            <span style={{ fontWeight: 700 }}>{hoverInfo}</span>
-          </div>
-          <div>
-            <span style={{ color: "#78716C", marginRight: 6 }}>
-              この範囲のエリア（{visibleAreas.length}）：
-            </span>
-            {visibleAreas.length === 0 ? (
-              <span style={{ color: "#78716C" }}>登録なし</span>
-            ) : (
-              visibleAreas.map((a, i) => (
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={showAreas}
+              onChange={(e) => setShowAreas(e.target.checked)}
+            />
+            <span style={{ fontWeight: 700 }}>エリアを表示</span>
+          </label>
+          {showAreas && (
+            <div style={{ marginTop: 8, lineHeight: 1.9 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span
-                  key={a.kind + a.id}
                   style={{
                     display: "inline-block",
-                    marginRight: 8,
-                    marginBottom: 4,
-                    padding: "2px 8px",
-                    borderRadius: 10,
-                    background: a.kind === "banned" ? "#FDECEA" : "#FFF7E0",
-                    border:
-                      "1px solid " + (a.kind === "banned" ? "#E7B4AE" : "#E8D08A"),
+                    width: 22,
+                    height: 4,
+                    background: "#D32F2F",
+                    borderRadius: 2,
                   }}
-                >
-                  {a.kind === "banned" ? "禁止" : "調整"}／{a.name}
-                </span>
-              ))
-            )}
-          </div>
+                />
+                <span>投稿禁止エリア</span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span
+                  style={{
+                    display: "inline-block",
+                    width: 22,
+                    height: 4,
+                    background: "#F57C00",
+                    borderRadius: 2,
+                  }}
+                />
+                <span>調整エリア</span>
+              </div>
+            </div>
+          )}
         </div>
       )}
+
+      <div ref={mapContainerRef} style={{ width: "100%", height: "100%" }} />
+
     </div>
   );
 });

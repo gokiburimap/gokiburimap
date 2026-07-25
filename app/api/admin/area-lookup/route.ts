@@ -81,12 +81,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "invalid_params" }, { status: 400 });
   }
 
-  const { data, error } = await supabase.rpc("areas_in_bounds", {
-    p_min_lat: minLat,
-    p_min_lng: minLng,
-    p_max_lat: maxLat,
-    p_max_lng: maxLng,
-  });
+  const { data, error } = await supabase.rpc(
+    sp.get("shapes") === "1" ? "area_shapes_in_bounds" : "areas_in_bounds",
+    {
+      p_min_lat: minLat,
+      p_min_lng: minLng,
+      p_max_lat: maxLat,
+      p_max_lng: maxLng,
+    }
+  );
   if (error) {
     console.error("範囲内のエリア取得に失敗:", error);
     return NextResponse.json({ areas: [], error: error.message });
