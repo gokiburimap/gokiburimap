@@ -10,7 +10,7 @@
 //            ※このGETだけは管理者以外（一般の地図）も使うため、認証不要。
 //              返すのは「エリアの形と調整値」だけで、投稿データは含まない。
 // ・POST   ：エリアの登録（描画ツールで作った多角形）。管理者のみ。
-// ・DELETE ：エリアの削除。管理者のみです。
+// ・DELETE ：エリアの削除。管理者のみ。
 // ============================================================
 import { NextRequest, NextResponse } from "next/server";
 import { getServiceClient } from "@/app/lib/supabase-server";
@@ -41,11 +41,40 @@ export async function GET(req: NextRequest) {
       ? { p_min_lat: minLat, p_min_lng: minLng, p_max_lat: maxLat, p_max_lng: maxLng }
       : { p_min_lat: null, p_min_lng: null, p_max_lat: null, p_max_lng: null }
   );
+
   if (error) {
     console.error("霧調整エリアの取得に失敗:", error);
-    return NextResponse.json({ areas: [], error: error.message }, { status: 200 });
+    return NextResponse.json(
+      { areas: [], error: error.message, via: "rpc" },
+      { status: 200 }
+    );
   }
-  return NextResponse.json({ areas: data ?? [] });
+
+  // 関数が空を返した場合の保険：テーブルを直接読んでみる。
+  // （関数の権限や引数の食い違いで空になることがあるため、
+  //   ここで拾えれば表示は継続できる。viaでどちらを使ったか分かる）
+  if (!data || data.length === 0) {
+    const fb = await supabase
+      .from("fog_adjust_areas")
+      .select("id, name, note, size_scale, margin_m, created_at")
+      .order("id", { ascending: false })
+      .limit(500);
+    if (!fb.error && fb.data && fb.data.length > 0) {
+      return NextResponse.json({
+        areas: fb.data,
+        via: "table",
+        note: "関数が空を返したため、テーブルから直接取得しました（地図の調整には形の情報が必要なので、関数側の修正が必要です）",
+      });
+    }
+    return NextResponse.json({
+      areas: [],
+      via: "rpc",
+      tableError: fb.error?.message ?? null,
+      tableCount: fb.data?.length ?? 0,
+    });
+  }
+
+  return NextResponse.json({ areas: data, via: "rpc" });
 }
 
 export async function POST(req: NextRequest) {
