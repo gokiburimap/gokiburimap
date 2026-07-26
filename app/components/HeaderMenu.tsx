@@ -698,11 +698,20 @@ function AboutContent() {
 function ContactContent() {
   return (
     <>
-      <Section title="お問い合わせについて">
-        <Paragraph>
-          本サービスへのご意見・ご質問、地図の内容に関するご連絡は、下記の窓口までお寄せください。
-        </Paragraph>
-      </Section>
+      {/* ★2026-07-26：冒頭の見出し「お問い合わせについて」は、パネル上部の
+          ラベルと重複するため削除。導入文から始める
+          （プライバシーポリシーと同じ扱い） */}
+      <Paragraph>
+        本サービスへのご意見・ご質問、地図の内容に関するご連絡は、下記の窓口までお寄せください。
+      </Paragraph>
+
+      <hr
+        style={{
+          border: "none",
+          borderTop: "1px solid #eee",
+          margin: "20px 0 0",
+        }}
+      />
 
       <Section title="お問い合わせ先">
         <Box>
@@ -1055,16 +1064,21 @@ export default function HeaderMenu() {
 
       {/* ============================================================
           👋 初回訪問時のウェルカム画面（2026-07-26 追加）
+          ★全画面ではなく、地図の上に重ねるポップアップ形式。
+            背景の半透明オーバーレイ越しに地図が見えるので、
+            何のサイトに来たのかが最初から伝わる。
           ★zIndexは5000。オーバーレイパネル(4000)より手前に出す。
             今後さらに手前へ重ねる要素を追加する場合は5000より大きい値を使う。
-          ★「地図をみる」で閉じ、以後は表示されない（localStorageに記録）。
+          ★背景のタップでは閉じない（誤タップで読まれずに消えるのを防ぐ）。
+            閉じる手段は「地図をみる」ボタンのみ。
+          ★閉じたことは localStorage に記録し、以後は表示されない。
          ============================================================ */}
       {showWelcome && (
         <div
           style={{
             position: "fixed",
             inset: 0,
-            background: "#ffffff",
+            background: "rgba(0,0,0,0.45)",
             zIndex: 5000,
             display: "flex",
             alignItems: "center",
@@ -1076,7 +1090,11 @@ export default function HeaderMenu() {
           <div
             style={{
               width: "100%",
-              maxWidth: 360,
+              maxWidth: 340,
+              background: "#ffffff",
+              borderRadius: 14,
+              boxShadow: "0 12px 40px rgba(0,0,0,0.25)",
+              padding: "28px 24px 24px",
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
@@ -1086,15 +1104,15 @@ export default function HeaderMenu() {
             <img
               src="/roach-icon.png"
               alt=""
-              style={{ width: 80, height: 80, objectFit: "contain", marginBottom: 20 }}
+              style={{ width: 64, height: 64, objectFit: "contain", marginBottom: 16 }}
             />
 
             <h2
               style={{
-                fontSize: 20,
+                fontSize: 18,
                 fontWeight: 700,
                 color: "#292524",
-                margin: "0 0 16px",
+                margin: "0 0 14px",
                 lineHeight: 1.4,
               }}
             >
@@ -1103,7 +1121,7 @@ export default function HeaderMenu() {
 
             {/* ★JSXは改行を半角スペースに変換するため、日本語では文の間に
                 余計な空白が入ってしまう。1文ずつ<p>に分けて回避している。 */}
-            <div style={{ margin: "0 0 28px" }}>
+            <div style={{ margin: "0 0 24px" }}>
               <p style={{ fontSize: 14, lineHeight: 1.9, color: "#292524", margin: 0 }}>
                 ゴキブリの目撃情報を、みんなで共有する地図サービスです。
               </p>
