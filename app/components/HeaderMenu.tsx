@@ -3,7 +3,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 
 // ============================================================
-// 🍔 ハンバーガーメニュー（2026-07-23 追加 / 2026-07-25 プライバシーポリシー本文を追加）
+// 🍔 ハンバーガーメニュー（2026-07-23 追加 / 2026-07-25 プライバシーポリシー本文を追加
+//    / 2026-07-26 「本サービスについて」追加 / 2026-07-26 「使い方ガイド」追加）
 //
 // 構成：
 //  ・ヘッダー右の□ボタン（テーマカラー枠）
@@ -22,6 +23,38 @@ import { useEffect, useState, type ReactNode } from "react";
 // スマホ（画面幅がこれより狭い場合）は今まで通り全幅で表示される。
 // ------------------------------------------------------------
 const PANEL_CONTENT_MAX_WIDTH = 640;
+
+// ------------------------------------------------------------
+// お問い合わせ先アドレス
+// ★この1行を書き換えるだけで、使い方ガイド・プライバシーポリシーの
+//   両方の記載に反映される。
+// ★2026-07-26：使い方ガイドからも参照するようになったため、
+//   ファイル上部に移動した（旧：プライバシーポリシー本文の直前）。
+// ------------------------------------------------------------
+const CONTACT_EMAIL = "gokiburimap@gmail.com";
+
+// ------------------------------------------------------------
+// ★★★ 要同期：色分けエリア表示の配色 ★★★
+//
+// AppleMap.tsx の COUNT_COLOR_BUCKETS から「色だけ」を書き写したもの。
+// 使い方ガイドの凡例図（ColorLegendFigure）で使用する。
+//
+// ・片方を変更したら、必ずもう片方も変更すること。
+//   （AppleMap.tsx を触りたくないという判断のため、あえて import せず
+//     重複させている。ズレても地図側の動作には影響せず、ガイドの凡例の
+//     色が古いままになるだけ）
+// ・件数の閾値（1〜20件 等）はここには持たない。閾値は運用しながら
+//   調整する可能性が高く、同期漏れが起きやすいため、ガイドの凡例では
+//   「少ない → 多い」の並びだけを示す方針とした。
+//   正確な件数は地図下部の凡例で確認できる。
+// ------------------------------------------------------------
+const GUIDE_LEGEND_COLORS = [
+  "94, 189, 172", // 青緑
+  "255, 209, 84", // 黄色
+  "255, 140, 43", // オレンジ
+  "224, 61, 40", // 赤
+  "106, 64, 205", // 紫
+];
 
 // ------------------------------------------------------------
 // オーバーレイパネル本文用の小さな見た目パーツ
@@ -83,7 +116,11 @@ function List({ children }: { children: ReactNode }) {
   );
 }
 
-function Item({ children }: { children: ReactNode }) {
+// ★2026-07-26：marker プロパティを追加。
+//   既定値は従来どおり「・」なので、プライバシーポリシー・本サービスに
+//   ついての既存の表示には一切影響しない。
+//   使い方ガイドの番号付き手順（1. 2. 3. …）でのみ marker を指定する。
+function Item({ children, marker = "・" }: { children: ReactNode; marker?: string }) {
   return (
     <li
       style={{
@@ -95,7 +132,7 @@ function Item({ children }: { children: ReactNode }) {
         marginBottom: 6,
       }}
     >
-      <span style={{ flexShrink: 0 }}>・</span>
+      <span style={{ flexShrink: 0 }}>{marker}</span>
       <span>{children}</span>
     </li>
   );
@@ -119,13 +156,211 @@ function Box({ children }: { children: ReactNode }) {
 }
 
 // ------------------------------------------------------------
+// 使い方ガイド用の図（★スクリーンショットではなくJSXで描画している）
+//
+// 画像ファイルを使わない理由：
+//  ・地図のスクショには実在の地名・建物名が写り込むため、「建物を
+//    特定する表示は行わない」という本サービスの方針と矛盾する
+//  ・Apple Mapsの著作権表示（規約上削除不可）が入り込む
+//  ・霧の濃さ・UIを変更するたびに撮り直しが必要になる
+// JSXで組めば上記がすべて解消でき、パネル幅にも自動で追従する。
+// ------------------------------------------------------------
+
+// 🪳アイコン＋数字のバッジ（円モードの見た目の再現）
+// ★実際の地図の描画（Canvas 2D で生成）と細部が違う場合は、
+//   下の width / fontSize / border の値を調整すること。
+function CountBadgeFigure() {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 14, margin: "14px 0" }}>
+      <div
+        style={{
+          width: 64,
+          height: 64,
+          borderRadius: "50%",
+          background: "#ffffff",
+          border: "2px solid #662510",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 1,
+          flexShrink: 0,
+        }}
+      >
+        <img src="/roach-icon.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
+        <span style={{ fontSize: 13, fontWeight: 700, color: "#292524", lineHeight: 1 }}>36</span>
+      </div>
+      <p style={{ fontSize: 12, lineHeight: 1.7, color: "#78716C", margin: 0 }}>
+        ※数字は、周辺にある目撃情報をまとめた件数です。
+      </p>
+    </div>
+  );
+}
+
+// 色分けエリア表示の凡例（件数の表記は入れず、色の並びだけを示す）
+function ColorLegendFigure() {
+  return (
+    <div style={{ margin: "14px 0" }}>
+      <div
+        style={{
+          display: "flex",
+          borderRadius: 6,
+          overflow: "hidden",
+          border: "1px solid #eee",
+        }}
+      >
+        {GUIDE_LEGEND_COLORS.map((rgb) => (
+          <div key={rgb} style={{ flex: 1, height: 22, background: `rgb(${rgb})` }} />
+        ))}
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
+        <span style={{ fontSize: 12, color: "#78716C" }}>少ない</span>
+        <span style={{ fontSize: 12, color: "#78716C" }}>多い</span>
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------
+// 使い方ガイド本文
+// ★2026-07-26：相談を経て確定した内容を反映。
+//   メニュー項目名を「投稿方法」→「使い方ガイド」に改称し、
+//   link（ダミー）から modal に変更した。
+//
+// ★「絞り込み」のセクションは、日付での絞り込み機能を実装してから
+//   公開すること。本番公開までに実装が間に合わない場合は、
+//   <Section title="絞り込み"> のブロックを丸ごと削除すればよい
+//   （他のセクションから独立させてあるため、削っても文章は成立する）。
+//
+// ★「清掃履歴（建物カルテ）」については、実装時に本セクションを追加する。
+//   ただし建物名を表示する機能のため、追加時には
+//   プライバシーポリシー・本サービスについての「建物が特定される
+//   ピン表示は行っていません」という記述も同時に改訂すること。
+// ------------------------------------------------------------
+function HowToGuideContent() {
+  return (
+    <>
+      <Section title="地図の見方">
+        <Paragraph>
+          ゴキブリマップを開くと、地図上に🪳アイコンと数字が表示されます。
+        </Paragraph>
+
+        <CountBadgeFigure />
+
+        <Paragraph>
+          地図を拡大していくと、アイコン表示が「色分けされたエリア」に切り替わります。色は周辺に集まっている目撃情報の件数によって変わり、件数が少ないところから順に、青緑・黄・オレンジ・赤・紫となります。
+        </Paragraph>
+
+        <ColorLegendFigure />
+
+        <Paragraph>
+          色分けエリア表示は、個別の投稿地点や建物が特定されないよう、一定の広がりを持たせて表示しています。なお、色の濃さは地域の衛生状態を評価したものではありません。人通りの多い場所や、関心を持つ方が多い地域ほど、投稿が集まりやすい傾向があります。
+        </Paragraph>
+      </Section>
+
+      <Section title="投稿方法">
+        <Paragraph>
+          目撃した場所と日付をご報告いただくことで、地図に反映されます。会員登録は必要ありません。
+        </Paragraph>
+        <List>
+          <Item marker="1.">
+            <strong>地図を目撃した場所まで拡大する</strong>
+            <br />
+            ある程度ズームインしていないと投稿を開始できません。ズームが足りない場合は、案内が表示されます。
+          </Item>
+          <Item marker="2.">
+            <strong>右下の「G」ボタンをタップする</strong>
+            <br />
+            「目撃した場所をタップしてください」という案内に変わります。
+          </Item>
+          <Item marker="3.">
+            <strong>地図上の目撃した場所をタップする</strong>
+            <br />
+            タップした位置にピンが立ちます。
+          </Item>
+          <Item marker="4.">
+            <strong>位置を調整する</strong>
+            <br />
+            白い吹き出しをドラッグすると、ピンの位置を細かく動かせます。
+          </Item>
+          <Item marker="5.">
+            <strong>内容を入力して送信する</strong>
+            <br />
+            都道府県・市区町村・目撃した日付をご入力ください。住所は地図の位置から自動で入りますので、必要に応じて修正してください。詳細コメントは任意です。
+          </Item>
+          <Item marker="6.">
+            <strong>投稿完了</strong>
+            <br />
+            投稿した場所に、確認用のピンが表示されます。
+          </Item>
+        </List>
+        <Box>
+          <p style={{ fontSize: 13, lineHeight: 1.8, color: "#292524", margin: 0 }}>
+            確認用のピンは、投稿を終えた直後にのみ表示されます。ご自身で投稿を取り消せるのは、確認用のピンが表示されている間だけです。画面を閉じたり、ページを更新したりすると再表示できませんので、ご注意ください。
+          </p>
+        </Box>
+      </Section>
+
+      <Section title="絞り込み">
+        <Paragraph>
+          目撃した日付で、地図の表示を絞り込むことができます。「1年以内」「3か月以内」といった期間を選ぶと、期間内に目撃された情報だけが地図に表示されます。最近の状況を知りたいときにお使いください。
+        </Paragraph>
+      </Section>
+
+      {/* 最後のセクションは区切り線が不要なので、Sectionを使わず直接記述 */}
+      <h3
+        style={{
+          fontSize: 17,
+          fontWeight: 700,
+          color: "#292524",
+          margin: "28px 0 12px",
+          paddingLeft: 12,
+          borderLeft: "4px solid #662510",
+          lineHeight: 1.4,
+        }}
+      >
+        ご利用にあたってのお願い
+      </h3>
+      <Paragraph>
+        本サービスは、投稿してくださる皆さんによって成り立っています。気持ちよくご利用いただくために、次の点にご協力をお願いいたします。
+      </Paragraph>
+      <List>
+        <Item>実際に目撃された場所と日付をご投稿ください。</Item>
+        <Item>個人名や部屋番号など、特定の方を指し示す内容は書かないでください。</Item>
+        <Item>誹謗中傷を目的とした投稿はご遠慮ください。</Item>
+      </List>
+
+      <SubHeading>投稿の削除</SubHeading>
+      <Paragraph>
+        ご自身の投稿は、投稿直後に表示される確認画面から取り消せます。確認画面を閉じた後の削除や、他の方の投稿についての削除のご希望は、お問い合わせ窓口までご連絡ください。内容を確認のうえ対応いたします。
+      </Paragraph>
+      <Paragraph>
+        投稿の取り扱いについて詳しくは、プライバシーポリシーをご覧ください。
+      </Paragraph>
+      <Box>
+        <Paragraph>
+          <a
+            href={`mailto:${CONTACT_EMAIL}`}
+            style={{ color: "#292524", fontWeight: 700, textDecoration: "underline" }}
+          >
+            {CONTACT_EMAIL}
+          </a>
+        </Paragraph>
+        <p style={{ fontSize: 12, color: "#78716C", margin: 0, lineHeight: 1.7 }}>
+          お問い合わせの内容によっては、ご返信できない場合がございますので、あらかじめご了承ください。
+        </p>
+      </Box>
+    </>
+  );
+}
+
+// ------------------------------------------------------------
 // プライバシーポリシー本文
 // ★2026-07-25：デザインを見出し・区切り線・囲み枠のあるレイアウトに刷新。
 //   文言を直したいときはこの関数の中だけを編集すればよい。
-//   お問い合わせ先アドレスは EMAIL 変数を書き換えるだけで全箇所に反映される。
+//   お問い合わせ先アドレスは、ファイル上部の CONTACT_EMAIL を書き換える
+//   だけで全箇所に反映される。
 // ------------------------------------------------------------
-const CONTACT_EMAIL = "gokiburimap@gmail.com";
-
 function PrivacyPolicyContent() {
   return (
     <>
@@ -310,20 +545,12 @@ function PrivacyPolicyContent() {
 // ★2026-07-26：相談を経て確定した内容を反映。
 //   プライバシーポリシーと同じ部品（Section/Paragraph/Box等）を再利用し、
 //   デザインを揃えている。
+// ★2026-07-26：冒頭の区切り線を削除（パネル上部のヘッダーバーの下線と
+//   二重に見えていたため）。
 // ------------------------------------------------------------
 function AboutContent() {
   return (
     <>
-      {/* ★2026-07-26：本文タイトルはヘッダーバーのラベルと重複するため削除。
-          区切り線から始める */}
-      <hr
-        style={{
-          border: "none",
-          borderTop: "1px solid #eee",
-          margin: "4px 0 8px",
-        }}
-      />
-
       <Section title="サービスの目的">
         <Paragraph>
           ゴキブリマップは、ゴキブリの目撃情報を地図上に可視化した「投稿型の地図サービス」です。
@@ -406,21 +633,27 @@ function AboutContent() {
 //
 // kind: "modal" → 地図の上にオーバーレイパネルを重ねて表示（別ページに
 //        遷移しない。地図の状態(位置・ズーム等)を一切失わない）
-// kind: "link"  → 通常の<a>リンク（投稿方法はまだページが無いのでダミー
-//        "#"のまま。noteは実URL・外部タブ）
+// kind: "link"  → 通常の<a>リンク（noteは実URL・外部タブ）
 //
 // ★2026-07-25：「プライバシーポリシー」を本文込みでmodal化。
 // ★2026-07-26：「このサイトについて」を「本サービスについて」に改称し、
 //   本文込みでmodal化。
-//   文言を直すときは PrivacyPolicyContent() / AboutContent() の中身を
-//   編集すればよい。
+// ★2026-07-26：「投稿方法」を「使い方ガイド」に改称し、本文込みでmodal化。
+//   （地図の見方・投稿方法・絞り込み・ご利用にあたってのお願い を含む）
+//   文言を直すときは HowToGuideContent() / PrivacyPolicyContent() /
+//   AboutContent() の中身を編集すればよい。
 // ============================================================
 type MenuItem =
   | { label: string; kind: "link"; href: string; external?: boolean }
   | { label: string; kind: "modal"; modalKey: string; content: ReactNode };
 
 const MENU_ITEMS: MenuItem[] = [
-  { label: "投稿方法", kind: "link", href: "#" },
+  {
+    label: "使い方ガイド",
+    kind: "modal",
+    modalKey: "guide",
+    content: <HowToGuideContent />,
+  },
   {
     label: "本サービスについて",
     kind: "modal",
@@ -673,3 +906,4 @@ export default function HeaderMenu() {
     </>
   );
 }
+
