@@ -70,6 +70,16 @@ export default function AdminPage() {
   const [armedFogDeleteId, setArmedFogDeleteId] = useState<number | null>(null);
   // 登録済みエリアの表示切替（投稿禁止エリア／調整エリア）
   const [areaTab, setAreaTab] = useState<"banned" | "fog">("banned");
+  // エリア一覧の絞り込み（数字ならID、文字なら名前で探す）
+  const [areaQuery, setAreaQuery] = useState("");
+
+  // 絞り込みの判定：数字だけならID一致、それ以外は名前の部分一致
+  const matchAreaQuery = (a: { id: number; name?: string }) => {
+    const q = areaQuery.trim();
+    if (!q) return true;
+    if (/^[0-9]+$/.test(q)) return String(a.id) === q;
+    return (a.name ?? "").toLowerCase().includes(q.toLowerCase());
+  };
   const [armedDeleteId, setArmedDeleteId] = useState<number | null>(null); // 2段階削除
 
   // ---- タブ2：禁止エリア用 ----
@@ -96,6 +106,12 @@ export default function AdminPage() {
   const [drawClosed, setDrawClosed] = useState(false);
   const drawClosedRef = useRef(false);
   const [satellite, setSatellite] = useState(false); // 航空写真モード（通常は標準地図。必要時のみ切替）
+  // 🗺 登録済みエリアを線で表示するか（初期はオフ。オンのときだけ描く）
+  const [showAreas, setShowAreas] = useState(false);
+  const showAreasRef = useRef(false);
+  const areaOverlaysRef = useRef<any[]>([]);
+  const areaLabelsRef = useRef<any[]>([]);
+  const drawExistingAreasRef = useRef<() => void>(() => {});
   const [jumpQuery, setJumpQuery] = useState("");
 
   // 地図の初期化（禁止エリアタブを開いたときだけ動かす）
@@ -221,6 +237,125 @@ export default function AdminPage() {
       mapDivRef.current.addEventListener("mousemove", onMouseMove);
       mapDivRef.current.addEventListener("mouseleave", removeHoverLine);
 
+      // ============================================================
+      // 🗺 登録済みエリアを線で表示する（2026-07-22）
+      //
+      // 新しく範囲を描くとき、既存のエリアと重ならないよう確認するため
+      // の機能。「登録済みエリアを表示」がオンのときだけ描く。
+      //  ・投稿禁止エリア＝赤／調整エリア＝黄（描画中の線は茶なので混同しない）
+      //  ・中央にID番号を出し、一覧で探す手掛かりにする
+      //  ・線もラベルもタッチに反応させない（描画の邪魔をしない）
+      //  ・地図が0.8秒静止してから描き直す
+      // ============================================================
+      const clearExistingAreas = () => {
+        if (areaOverlaysRef.current.length > 0) {
+          try {
+            map.removeOverlays(areaOverlaysRef.current);
+          } catch { /* すでに外れている場合は無視 */ }
+          areaOverlaysRef.current = [];
+        }
+        if (areaLabelsRef.current.length > 0) {
+          try {
+            map.removeAnnotations(areaLabelsRef.current);
+          } catch { /* すでに外れている場合は無視 */ }
+          areaLabelsRef.current = [];
+        }
+      };
+
+      const drawExistingAreas = async () => {
+        if (!showAreasRef.current) {
+          clearExistingAreas();
+          return;
+        }
+        try {
+          const c = map.region.center;
+          const sp = map.region.span;
+          const q =
+            `?shapes=1` +
+            `&minLat=${c.latitude - sp.latitudeDelta / 2}` +
+            `&minLng=${c.longitude - sp.longitudeDelta / 2}` +
+            `&maxLat=${c.latitude + sp.latitudeDelta / 2}` +
+            `&maxLng=${c.longitude + sp.longitudeDelta / 2}`;
+          const res = await fetch("/api/admin/area-lookup" + q, {
+            headers: { "x-admin-key": localStorage.getItem("adminKey") ?? "" },
+          });
+          if (!res.ok) return;
+          const json = await res.json();
+          const rows: any[] = json.areas ?? [];
+
+          clearExistingAreas();
+          const overlays: any[] = [];
+          const labels: any[] = [];
+
+          rows.forEach((row) => {
+            const g = row.geojson;
+            if (!g) return;
+            const polys: any[] =
+              g.type === "MultiPolygon" ? g.coordinates : [g.coordinates];
+            polys.forEach((rings: any[]) => {
+              const points = (rings[0] ?? []).map(
+                (p: number[]) => new mk.Coordinate(p[1], p[0])
+              );
+              if (points.length < 3) return;
+
+              const isBanned = row.kind === "banned";
+              const color = isBanned ? "#D32F2F" : "#F9A825";
+              const ov = new mk.PolygonOverlay([points], {
+                style: new mk.Style({
+                  strokeColor: color,
+                  strokeOpacity: 1,
+                  lineWidth: 4,
+                  fillColor: color,
+                  fillOpacity: 0.12,
+                }),
+                enabled: false,
+              });
+              overlays.push(ov);
+
+              // 中央にID番号（色で種類が分かるので数字だけ）
+              let sLat = 0, sLng = 0;
+              points.forEach((pt: any) => { sLat += pt.latitude; sLng += pt.longitude; });
+              const label = new mk.Annotation(
+                new mk.Coordinate(sLat / points.length, sLng / points.length),
+                () => {
+                  const el = document.createElement("div");
+                  el.textContent = String(row.id);
+                  el.style.cssText =
+                    "font:700 13px/1 system-ui,sans-serif;color:#FFFFFF;background:" +
+                    color +
+                    ";padding:3px 7px;border-radius:9px;white-space:nowrap;" +
+                    "box-shadow:0 1px 3px rgba(0,0,0,0.3);pointer-events:none;" +
+                    "user-select:none;-webkit-user-select:none;";
+                  return el;
+                },
+                { anchorOffset: new DOMPoint(0, 0) }
+              );
+              label.enabled = false;
+              labels.push(label);
+            });
+          });
+
+          if (overlays.length > 0) {
+            map.addOverlays(overlays);
+            areaOverlaysRef.current = overlays;
+          }
+          if (labels.length > 0) {
+            map.addAnnotations(labels);
+            areaLabelsRef.current = labels;
+          }
+        } catch {
+          /* 失敗しても描画作業には影響させない */
+        }
+      };
+
+      drawExistingAreasRef.current = drawExistingAreas;
+
+      let areaTimer: ReturnType<typeof setTimeout> | null = null;
+      map.addEventListener("region-change-end", () => {
+        if (areaTimer) clearTimeout(areaTimer);
+        areaTimer = setTimeout(drawExistingAreas, 800);
+      });
+
       adminMapRef.current = map;
     };
 
@@ -267,6 +402,12 @@ export default function AdminPage() {
     if (!map || !mk) return;
     map.mapType = satellite ? mk.Map.MapTypes.Hybrid : mk.Map.MapTypes.Standard;
   }, [satellite]);
+
+  // 🗺 「登録済みエリアを表示」の切替を、すぐ地図に反映する
+  useEffect(() => {
+    showAreasRef.current = showAreas;
+    drawExistingAreasRef.current();
+  }, [showAreas]);
 
   // 頂点・閉じ状態が変わるたびに、頂点マーカー・確定線・面を描き直す
   useEffect(() => {
@@ -953,34 +1094,39 @@ export default function AdminPage() {
       {tab === "areas" && (
         <section>
           <h2 style={{ fontSize: 16, marginBottom: 8 }}>新規登録</h2>
-          <input
-            value={areaName}
-            onChange={(e) => setAreaName(e.target.value)}
-            placeholder="エリア名（例：〇〇マンション／皇居）"
-            style={{
-              width: "100%",
-              padding: 10,
-              border: "1px solid #ccc",
-              borderRadius: 8,
-              fontSize: 13,
-              marginBottom: 8,
-              boxSizing: "border-box",
-            }}
-          />
-          <input
-            value={areaReason}
-            onChange={(e) => setAreaReason(e.target.value)}
-            placeholder="理由（任意。例：オーナー様からの削除依頼）"
-            style={{
-              width: "100%",
-              padding: 10,
-              border: "1px solid #ccc",
-              borderRadius: 8,
-              fontSize: 13,
-              marginBottom: 8,
-              boxSizing: "border-box",
-            }}
-          />
+          {/* エリア名と理由を横並びに。理由は右下をつまんで広げられる */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "flex-start" }}>
+            <input
+              value={areaName}
+              onChange={(e) => setAreaName(e.target.value)}
+              placeholder="エリア名（例：〇〇マンション／皇居）"
+              style={{
+                flex: "0 0 280px",
+                padding: 10,
+                border: "1px solid #ccc",
+                borderRadius: 8,
+                fontSize: 13,
+                boxSizing: "border-box",
+              }}
+            />
+            <textarea
+              value={areaReason}
+              onChange={(e) => setAreaReason(e.target.value)}
+              placeholder="理由（任意。例：オーナー様からの削除依頼）"
+              rows={1}
+              style={{
+                flex: 1,
+                minWidth: 200,
+                padding: 10,
+                border: "1px solid #ccc",
+                borderRadius: 8,
+                fontSize: 13,
+                boxSizing: "border-box",
+                resize: "both", // 右下をつまんで拡大できる
+                fontFamily: "inherit",
+              }}
+            />
+          </div>
 
           <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
             <input
@@ -1008,6 +1154,31 @@ export default function AdminPage() {
               />
               航空写真
             </label>
+            {/* 🗺 既存エリアを線で表示（重複を防いで描くため。初期はオフ） */}
+            <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 4 }}>
+              <input
+                type="checkbox"
+                checked={showAreas}
+                onChange={(e) => setShowAreas(e.target.checked)}
+              />
+              登録済みエリアを表示
+            </label>
+            {showAreas && (
+              <span style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <span
+                    style={{ width: 18, height: 4, background: "#D32F2F", borderRadius: 2 }}
+                  />
+                  投稿禁止
+                </span>
+                <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <span
+                    style={{ width: 18, height: 4, background: "#F9A825", borderRadius: 2 }}
+                  />
+                  調整
+                </span>
+              </span>
+            )}
           </div>
           <div
             ref={mapDivRef}
@@ -1106,15 +1277,31 @@ export default function AdminPage() {
               onClick={() => setAreaTab("banned")}
               style={btn(areaTab === "banned")}
             >
-              投稿禁止エリア（{areas.length}）
+              投稿禁止エリア（{areas.filter(matchAreaQuery).length}）
             </button>
             <button
               onClick={() => setAreaTab("fog")}
               style={btn(areaTab === "fog")}
             >
-              調整エリア（{fogAreas.length}）
+              調整エリア（{fogAreas.filter(matchAreaQuery).length}）
             </button>
           </div>
+
+          <input
+            value={areaQuery}
+            onChange={(e) => setAreaQuery(e.target.value)}
+            placeholder="番号または名前で絞り込む（例：128 ／ マンション）"
+            style={{
+              width: "100%",
+              maxWidth: 420,
+              padding: 8,
+              border: "1px solid #ccc",
+              borderRadius: 8,
+              fontSize: 13,
+              marginBottom: 10,
+              boxSizing: "border-box",
+            }}
+          />
 
           {areaTab === "banned" ? (
           <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
@@ -1128,7 +1315,7 @@ export default function AdminPage() {
               </tr>
             </thead>
             <tbody>
-              {areas.map((a) => (
+              {areas.filter(matchAreaQuery).map((a) => (
                 <tr key={a.id} style={{ borderBottom: "1px solid #eee" }}>
                   <td style={{ padding: 8 }}>{a.id}</td>
                   <td style={{ padding: 8 }}>{a.name}</td>
@@ -1153,7 +1340,7 @@ export default function AdminPage() {
                         marginRight: 6,
                       }}
                     >
-                      {armedPurgeId === a.id ? "本当に全削除" : "エリア内の投稿を全削除"}
+                      {armedPurgeId === a.id ? "本当に削除" : "エリア内の投稿削除"}
                     </button>
                     <button onClick={() => deleteArea(a.id)} style={btn()}>
                       エリアを削除
@@ -1172,12 +1359,10 @@ export default function AdminPage() {
             調整エリアの一覧
           </h3>
           <p style={{ fontSize: 12, color: SUB, margin: "0 0 8px" }}>
-            ・このエリア内の投稿は、建物と反対の外向きにずらし、指定倍率で小さく表示します。投稿データは消えません。
+            ・調整エリア内の投稿は、建物と反対の外向きにずらし、指定倍率で小さく表示します。
             <br />
             ・<b>倍率</b>：小さいほど縮みます（0.7〜0.8推奨）。
             <b>余裕(m)</b>：0で端が投稿地点に接します。プラスで離し、マイナスで重なります。
-            <br />
-            ・変更後、地図を再読み込みすると反映されます。
           </p>
           {fogAreas.length === 0 ? (
             <p style={{ fontSize: 13, color: SUB }}>まだ登録がありません。</p>
@@ -1188,14 +1373,14 @@ export default function AdminPage() {
                   <tr style={{ borderBottom: "2px solid #ddd", textAlign: "left" }}>
                     <th style={{ padding: 8 }}>ID</th>
                     <th style={{ padding: 8 }}>エリア名</th>
-                    <th style={{ padding: 8 }}>メモ</th>
+                    <th style={{ padding: 8 }}>理由</th>
                     <th style={{ padding: 8 }}>大きさの倍率</th>
                     <th style={{ padding: 8 }}>余裕(m)</th>
                     <th style={{ padding: 8 }}>操作</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {fogAreas.map((a) => (
+                  {fogAreas.filter(matchAreaQuery).map((a) => (
                     <tr key={a.id} style={{ borderBottom: "1px solid #eee" }}>
                       <td style={{ padding: 8 }}>{a.id}</td>
                       <td style={{ padding: 8 }}>{a.name}</td>
@@ -1258,11 +1443,6 @@ export default function AdminPage() {
 
             </div>
           )}
-          <p style={{ fontSize: 12, color: SUB, marginTop: 8 }}>
-            ・「エリア内の投稿を全削除」＝そのエリアの中にある既存投稿（霧）を一掃します。管理会社・オーナーからの削除依頼には、「①geojson.ioで建物の形を囲って登録 → ②このボタンで中の投稿を全削除」のセットで対応してください。以後、その建物への新規投稿も自動で拒否されます。
-            <br />
-            ・「エリアを削除」＝禁止指定を解除します。その場所への投稿が再びできるようになります（消した投稿は戻りません）。
-          </p>
         </section>
       )}
     </main>

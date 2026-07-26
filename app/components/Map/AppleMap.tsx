@@ -71,6 +71,8 @@ interface AppleMapProps {
   // URLに?adminを付けただけの一般人には何も見えない。
   // ============================================================
   adminKey?: string | null;
+  /** 🗺 登録済みエリアを線で表示する（管理画面の描画地図で使う） */
+  showAreas?: boolean;
   // ============================================================
   // 🚫 投稿できない場所をタップしたときの通知（2026-07-18 追加）
   //
@@ -1286,6 +1288,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     onDismissJustPosted,
     onJustPostedDeleted,
     adminKey = null,
+    showAreas = false,
     onOutOfService,
   },
   ref
@@ -1343,10 +1346,10 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   // ============================================================
   const adminKeyRef = useRef<string | null | undefined>(adminKey);
 
-  // 🗺 管理者モード：エリアの形を線で表示するかどうか（初期はオフ）
-  const [showAreas, setShowAreas] = useState(false);
+  // 🗺 エリアの形を線で表示するか（propsで受け取る）
   const showAreasRef = useRef(false);
   const areaOverlaysRef = useRef<any[]>([]);
+  const areaLabelsRef = useRef<any[]>([]); // エリアのID番号ラベル
   const drawAreaShapesRef = useRef<() => void>(() => {});
   const drawAreaShapesNowRef = useRef<() => void>(() => {});
 
@@ -1830,11 +1833,19 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
           }
           areaOverlaysRef.current = [];
         }
+        if (areaLabelsRef.current.length > 0) {
+          try {
+            map.removeAnnotations(areaLabelsRef.current);
+          } catch {
+            /* すでに外れている場合は何もしない */
+          }
+          areaLabelsRef.current = [];
+        }
       };
 
       const drawAreaShapes = async () => {
         // オフ、または管理者モードでなければ、描いてあるものを消して終了
-        if (!showAreasRef.current || !adminKeyRef.current) {
+        if (!showAreasRef.current) {
           clearAreaShapes();
           return;
         }
@@ -1848,7 +1859,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
             `&maxLat=${c.latitude + s.latitudeDelta / 2}` +
             `&maxLng=${c.longitude + s.longitudeDelta / 2}`;
           const res = await fetch("/api/admin/area-lookup" + q, {
-            headers: { "x-admin-key": adminKeyRef.current },
+            headers: { "x-admin-key": adminKeyRef.current ?? "" },
           });
           if (!res.ok) return;
           const json = await res.json();
@@ -1856,6 +1867,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
           clearAreaShapes();
           const overlays: any[] = [];
+          const labelAnnotations: any[] = [];
 
           rows.forEach((row) => {
             const g = row.geojson;
@@ -1873,22 +1885,57 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
               const isBanned = row.kind === "banned";
               const overlay = new window.mapkit.PolygonOverlay([points], {
                 style: new window.mapkit.Style({
-                  strokeColor: isBanned ? "#D32F2F" : "#F57C00",
+                  strokeColor: isBanned ? "#D32F2F" : "#F9A825",
                   strokeOpacity: 1,
                   lineWidth: 4, // 太めにして見やすく
-                  fillColor: isBanned ? "#D32F2F" : "#F57C00",
+                  fillColor: isBanned ? "#D32F2F" : "#F9A825",
                   fillOpacity: 0.12, // 地図が読める程度の薄い塗り
                 }),
               });
               // タッチに反応させない（地図操作の妨げ・不具合の予防）
               overlay.enabled = false;
               overlays.push(overlay);
+
+              // 🔢 エリアの中央にID番号を出す。
+              //    どのエリアかを一覧で探すときの手掛かりにする。
+              //    種類は線の色で分かるので、番号だけを短く表示する。
+              let sumLat = 0;
+              let sumLng = 0;
+              points.forEach((pt: any) => {
+                sumLat += pt.latitude;
+                sumLng += pt.longitude;
+              });
+              const center = new window.mapkit.Coordinate(
+                sumLat / points.length,
+                sumLng / points.length
+              );
+              const label = new window.mapkit.Annotation(
+                center,
+                () => {
+                  const el = document.createElement("div");
+                  el.textContent = String(row.id);
+                  el.style.cssText =
+                    "font:700 13px/1 system-ui,sans-serif;color:#FFFFFF;" +
+                    "background:" + (isBanned ? "#D32F2F" : "#F9A825") + ";" +
+                    "padding:3px 7px;border-radius:9px;white-space:nowrap;" +
+                    "box-shadow:0 1px 3px rgba(0,0,0,0.3);pointer-events:none;" +
+                    "user-select:none;-webkit-user-select:none;";
+                  return el;
+                },
+                { anchorOffset: new DOMPoint(0, 0) }
+              );
+              label.enabled = false; // タッチに反応させない
+              labelAnnotations.push(label);
             });
           });
 
           if (overlays.length > 0) {
             map.addOverlays(overlays);
             areaOverlaysRef.current = overlays;
+          }
+          if (labelAnnotations.length > 0) {
+            map.addAnnotations(labelAnnotations);
+            areaLabelsRef.current = labelAnnotations;
           }
         } catch {
           /* 失敗しても地図の表示自体には影響させない */
@@ -2348,9 +2395,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       {/*
         🎨 目撃件数の凡例（PC=右上・従来サイズ／スマホ=左下・やや小さめ）
         位置・サイズの微調整は、コンポーネント上部の LEGEND_PC / LEGEND_SP で行う。
-        ★管理者モードでは表示しない（エリア確認の帯を優先し、画面を広く使うため）
       */}
-      {!adminKey && (
       <div
         style={{
           position: "absolute",
@@ -2422,68 +2467,6 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
             </div>
           ))}
       </div>
-      )}
-
-      {/* ============================================================
-          🗺 管理者モード専用：エリアの線表示の切り替えと色の凡例
-          新しく範囲を設定するとき、既存エリアとの重複を防ぐために使う。
-          初期はオフ。オンのときだけ線を描くので、普段は負荷ゼロ。
-         ============================================================ */}
-      {adminKey && (
-        <div
-          style={{
-            position: "absolute",
-            top: 12,
-            right: 15,
-            zIndex: 1200,
-            background: "rgba(255,255,255,0.96)",
-            border: "1px solid #E7E5E4",
-            borderRadius: 10,
-            padding: "10px 14px",
-            fontSize: 13,
-            color: "#292524",
-            boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
-            userSelect: "none",
-          }}
-        >
-          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              checked={showAreas}
-              onChange={(e) => setShowAreas(e.target.checked)}
-            />
-            <span style={{ fontWeight: 700 }}>エリアを表示</span>
-          </label>
-          {showAreas && (
-            <div style={{ marginTop: 8, lineHeight: 1.9 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span
-                  style={{
-                    display: "inline-block",
-                    width: 22,
-                    height: 4,
-                    background: "#D32F2F",
-                    borderRadius: 2,
-                  }}
-                />
-                <span>投稿禁止エリア</span>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span
-                  style={{
-                    display: "inline-block",
-                    width: 22,
-                    height: 4,
-                    background: "#F57C00",
-                    borderRadius: 2,
-                  }}
-                />
-                <span>調整エリア</span>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
 
       <div ref={mapContainerRef} style={{ width: "100%", height: "100%" }} />
 
