@@ -242,23 +242,28 @@ function CountBadgeFigure() {
 function ColorLegendFigure() {
   return (
     <Figure>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {GUIDE_LEGEND_COLORS.map((bucket) => (
-          <div key={bucket.label} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span
-              style={{
-                width: 28,
-                height: 16,
-                borderRadius: 3,
-                background: `rgb(${bucket.rgb})`,
-                flexShrink: 0,
-              }}
-            />
-            <span style={{ fontSize: 13, lineHeight: 1.4, color: "#292524" }}>
-              {bucket.label}
-            </span>
-          </div>
-        ))}
+      {/* バッジ図が中央寄せなので、凡例も中央に揃える。
+          ただし色見本とラベルの頭は揃えたいので、内側は左揃えのまま
+          ブロックごと中央に寄せている。 */}
+      <div style={{ display: "flex", justifyContent: "center" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {GUIDE_LEGEND_COLORS.map((bucket) => (
+            <div key={bucket.label} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span
+                style={{
+                  width: 28,
+                  height: 16,
+                  borderRadius: 3,
+                  background: `rgb(${bucket.rgb})`,
+                  flexShrink: 0,
+                }}
+              />
+              <span style={{ fontSize: 13, lineHeight: 1.4, color: "#292524" }}>
+                {bucket.label}
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
     </Figure>
   );
@@ -285,7 +290,7 @@ function HowToGuideContent() {
     <>
       <Section title="地図の見方">
         <Paragraph>
-          ゴキブリマップを開くと、地図上に🪳アイコンと数字が表示されます。
+          ゴキブリマップを開くと、地図上にアイコンと数字が表示されます。
         </Paragraph>
 
         <CountBadgeFigure />
@@ -329,7 +334,7 @@ function HowToGuideContent() {
           <Item marker="5.">
             <strong>内容を入力して送信する</strong>
             <br />
-            都道府県・市区町村・目撃した日付をご入力ください。住所は地図の位置から自動で入りますので、必要に応じて修正してください。詳細コメントは任意です。
+            都道府県・市区町村・目撃した日付をご入力ください。住所は地図の位置から自動で入りますので、必要に応じて修正してください。なお、詳細コメントは任意です。空欄のままでも構いません。
           </Item>
           <Item marker="6.">
             <strong>投稿完了</strong>
@@ -373,7 +378,7 @@ function HowToGuideContent() {
         <Item>誹謗中傷を目的とした投稿はご遠慮ください。</Item>
       </List>
 
-      <SubHeading>投稿の削除</SubHeading>
+      <SubHeading>【投稿の削除】</SubHeading>
       <Paragraph>
         ご自身の投稿は、投稿直後に表示される確認画面から取り消せます。確認画面を閉じた後の削除や、他の方の投稿についての削除のご希望は、お問い合わせ窓口までご連絡ください。内容を確認のうえ対応いたします。
       </Paragraph>
