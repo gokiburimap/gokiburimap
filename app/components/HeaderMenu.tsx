@@ -141,11 +141,11 @@ function PrivacyPolicyContent() {
           margin: "0 0 24px",
         }}
       >
-        最終更新日：（2026年7月31日）
+        最終更新日：（公開日を記載）
       </p>
 
       <Paragraph>
-        ゴキブリマップ（以下「本サービス」）は、ゴキブリの目撃情報を閲覧できる「投稿型の地図サービス」です。本サービスは個人情報の保護に関する法律、その他の関連法令を遵守し、収集する情報を適切に取り扱います。
+        ゴキブリマップ（以下「本サービス」）は、ゴキブリの目撃情報を閲覧できる「投稿型の地図サービス」です。本サービスは、個人情報の保護に関する法律、その他の関連法令を遵守し、収集する情報を適切に取り扱います。
       </Paragraph>
 
       <hr
@@ -211,7 +211,7 @@ function PrivacyPolicyContent() {
           </Item>
         </List>
         <Paragraph>
-          今後、広告配信サービスを導入する場合があります。その際は、送信先・送信される情報・利用目的を明記のうえ、本ページを更新します。
+          なお、今後広告配信サービスを導入する場合があります。その際は、送信先・送信される情報・利用目的を明記のうえ、本ページを更新します。
         </Paragraph>
       </Section>
 
@@ -307,6 +307,96 @@ function PrivacyPolicyContent() {
   );
 }
 
+// ------------------------------------------------------------
+// 「本サービスについて」本文
+// ★2026-07-26：相談を経て確定した内容を反映。
+//   プライバシーポリシーと同じ部品（Section/Paragraph/Box等）を再利用し、
+//   デザインを揃えている。
+// ------------------------------------------------------------
+function AboutContent() {
+  return (
+    <>
+      <h2
+        style={{
+          fontSize: 22,
+          fontWeight: 700,
+          color: "#292524",
+          textAlign: "center",
+          margin: "4px 0 24px",
+        }}
+      >
+        本サービスについて
+      </h2>
+
+      <Section title="サービスの目的">
+        <Paragraph>
+          ゴキブリマップは、ゴキブリの目撃情報を地図上に可視化して、みんなで共有するための「投稿型の地図サービス」です。
+        </Paragraph>
+        <Paragraph>
+          引越し前の環境チェックはもちろん、身の回りの衛生状況が気になるときにも、参考情報としてお役立ていただければと思っています。
+        </Paragraph>
+        <Paragraph>
+          なお、本サービスは特定の地域や施設、個人を貶める目的のサービスではありません。情報をオープンに共有することで、住環境の改善につながることを目指しています。
+        </Paragraph>
+      </Section>
+
+      <Section title="色分けエリア表示について">
+        <Paragraph>
+          本サービスでは、建物・施設を特定できるピン表示はあえて行わず、複数の投稿をまとめて匿名化した「色分けエリア表示」のみを掲載しています。
+        </Paragraph>
+        <Paragraph>
+          特定の建物・施設が名指しで晒されることのないよう配慮した上で、ゴキブリの発生傾向という情報だけを、地域単位で分かりやすくお届けすることを目指しています。
+        </Paragraph>
+      </Section>
+
+      <Section title="運営について">
+        <Paragraph>
+          ゴキブリマップは、個人が開発・運営しているサービスです。皆さんから寄せられる目撃情報の積み重ねにより、価値ある地図に育てていきたいと考えています。
+        </Paragraph>
+        <Paragraph>
+          運営にあたっては誠実な対応を心がけていますが、掲載内容の正確性・完全性を保証するものではありません。ご不明な点やお気づきの点がございましたら、お問い合わせ窓口までお気軽にご連絡ください。
+        </Paragraph>
+      </Section>
+
+      {/* 最後のセクションは区切り線が不要なので、Sectionを使わず直接記述 */}
+      <h3
+        style={{
+          fontSize: 17,
+          fontWeight: 700,
+          color: "#292524",
+          margin: "28px 0 12px",
+          paddingLeft: 12,
+          borderLeft: "4px solid #662510",
+          lineHeight: 1.4,
+        }}
+      >
+        運営者
+      </h3>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div
+          style={{
+            width: 48,
+            height: 48,
+            borderRadius: "50%",
+            background: "#fafaf9",
+            border: "1px solid #eee",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            overflow: "hidden",
+            flexShrink: 0,
+          }}
+        >
+          <img src="/roach-icon.png" alt="" style={{ width: 28, height: 28, objectFit: "contain" }} />
+        </div>
+        <span style={{ fontSize: 14, fontWeight: 700, color: "#292524" }}>
+          ゴキブリマップ運営　ゴキ
+        </span>
+      </div>
+    </>
+  );
+}
+
 // ============================================================
 // メニュー項目の定義
 //
@@ -316,7 +406,10 @@ function PrivacyPolicyContent() {
 //        "#"のまま。noteは実URL・外部タブ）
 //
 // ★2026-07-25：「プライバシーポリシー」を本文込みでmodal化。
-//   文言を直すときは PrivacyPolicyContent() の中身を編集すればよい。
+// ★2026-07-26：「このサイトについて」を「本サービスについて」に改称し、
+//   本文込みでmodal化。
+//   文言を直すときは PrivacyPolicyContent() / AboutContent() の中身を
+//   編集すればよい。
 // ============================================================
 type MenuItem =
   | { label: string; kind: "link"; href: string; external?: boolean }
@@ -325,11 +418,10 @@ type MenuItem =
 const MENU_ITEMS: MenuItem[] = [
   { label: "投稿方法", kind: "link", href: "#" },
   {
-    label: "このサイトについて",
+    label: "本サービスについて",
     kind: "modal",
     modalKey: "about",
-    content:
-      "（ここは仮テキストです。後で本文に差し替えてください）\n\nゴキブリマップは、引っ越し前に物件・建物周辺のゴキブリ発生履歴を調べられる、ユーザー投稿型の地図サービスです。個別の建物を特定できないよう、複数件をまとめた匿名化された「霧」で目撃件数のおおまかな傾向だけをお見せする方式を採用しています。",
+    content: <AboutContent />,
   },
   {
     label: "プライバシーポリシー",
