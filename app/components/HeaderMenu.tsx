@@ -43,6 +43,10 @@ const CONTACT_EMAIL = "gokiburimap@gmail.com";
 // ------------------------------------------------------------
 const WELCOME_STORAGE_KEY = "gokiburimap_welcome_seen_v1";
 
+// ウェルカム画面の本文で、文節ごとに折り返しを制御するためのスタイル。
+// inline-block にすると、その塊の途中では改行されなくなる。
+const WELCOME_PHRASE = { display: "inline-block" } as const;
+
 // ------------------------------------------------------------
 // ★★★ 要同期：色分けエリア表示の配色 ★★★
 //
@@ -1119,17 +1123,20 @@ export default function HeaderMenu() {
               ゴキブリマップへようこそ
             </h2>
 
-            {/* ★JSXは改行を半角スペースに変換するため、日本語では文の間に
-                余計な空白が入ってしまう。1文ずつ<p>に分けて回避している。 */}
+            {/* ★文節ごとに inline-block の <span> で包んでいる。
+                こうすると改行が文節の切れ目にしか起きず、
+                「みんなで共有す／る地図」のような不自然な折り返しを防げる。
+                ★JSXは改行を半角スペースに変換するため、隣り合う<span>は
+                必ず同じ行に並べること（改行すると文節の間に空白が入る）。
+                ★1文節が長すぎると、その中で折り返されてしまう。
+                文言を変えるときは1文節13文字程度までに収めること
+                （画面幅320pxの端末で1行16文字程度が上限）。 */}
             <div style={{ margin: "0 0 24px" }}>
               <p style={{ fontSize: 14, lineHeight: 1.9, color: "#292524", margin: 0 }}>
-                ゴキブリの目撃情報を、みんなで共有する地図サービスです。
+                <span style={WELCOME_PHRASE}>ゴキブリの目撃情報を、</span><span style={WELCOME_PHRASE}>みんなで共有する地図です。</span>
               </p>
               <p style={{ fontSize: 14, lineHeight: 1.9, color: "#292524", margin: 0 }}>
-                あなたの1件が、誰かの参考になります。
-              </p>
-              <p style={{ fontSize: 14, lineHeight: 1.9, color: "#292524", margin: 0 }}>
-                どうぞご自由にお使いください。
+                <span style={WELCOME_PHRASE}>あなたの1件が、</span><span style={WELCOME_PHRASE}>誰かの参考になります。</span>
               </p>
             </div>
 
