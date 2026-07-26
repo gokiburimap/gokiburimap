@@ -1099,9 +1099,9 @@ export default function AdminPage() {
             <input
               value={areaName}
               onChange={(e) => setAreaName(e.target.value)}
-              placeholder="エリア名（例：〇〇マンション／皇居）"
+              placeholder="エリア名（例：〇〇マンション）"
               style={{
-                flex: "0 0 280px",
+                flex: "0 0 340px",
                 padding: 10,
                 border: "1px solid #ccc",
                 borderRadius: 8,
@@ -1133,10 +1133,10 @@ export default function AdminPage() {
               value={jumpQuery}
               onChange={(e) => setJumpQuery(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && jumpTo()}
-              placeholder="住所・建物名で地図を移動（例：浦安市舞浜1-1）"
+              placeholder="住所で地図を移動"
               style={{
                 flex: 1,
-                minWidth: 240,
+                minWidth: 220,
                 padding: 8,
                 border: "1px solid #ccc",
                 borderRadius: 8,
@@ -1163,22 +1163,21 @@ export default function AdminPage() {
               />
               登録済みエリアを表示
             </label>
-            {showAreas && (
-              <span style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <span
-                    style={{ width: 18, height: 4, background: "#D32F2F", borderRadius: 2 }}
-                  />
-                  投稿禁止
-                </span>
-                <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <span
-                    style={{ width: 18, height: 4, background: "#F9A825", borderRadius: 2 }}
-                  />
-                  調整
-                </span>
+            {/* 色の凡例は常に出しておく（チェックのオンオフに関わらず） */}
+            <span style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <span
+                  style={{ width: 18, height: 4, background: "#D32F2F", borderRadius: 2 }}
+                />
+                投稿禁止
               </span>
-            )}
+              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <span
+                  style={{ width: 18, height: 4, background: "#F9A825", borderRadius: 2 }}
+                />
+                調整
+              </span>
+            </span>
           </div>
           <div
             ref={mapDivRef}
@@ -1304,6 +1303,14 @@ export default function AdminPage() {
           />
 
           {areaTab === "banned" ? (
+          <div
+            style={{
+              height: 400, // 件数が変わっても枠の大きさは変えない（絞り込みで画面が動かないように）
+              overflowY: "auto",
+              border: "1px solid #E7E5E4",
+              borderRadius: 8,
+            }}
+          >
           <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
             <thead>
               <tr style={{ borderBottom: `2px solid ${BRAND}`, textAlign: "left" }}>
@@ -1319,7 +1326,18 @@ export default function AdminPage() {
                 <tr key={a.id} style={{ borderBottom: "1px solid #eee" }}>
                   <td style={{ padding: 8 }}>{a.id}</td>
                   <td style={{ padding: 8 }}>{a.name}</td>
-                  <td style={{ padding: 8 }}>{a.reason ?? "-"}</td>
+                  <td
+                    style={{
+                      padding: 8,
+                      maxWidth: 260,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                    title={a.reason ?? ""}
+                  >
+                    {a.reason ?? "-"}
+                  </td>
                   <td style={{ padding: 8, whiteSpace: "nowrap" }}>
                     {new Date(a.created_at).toLocaleDateString("ja-JP")}
                   </td>
@@ -1350,6 +1368,7 @@ export default function AdminPage() {
               ))}
             </tbody>
           </table>
+          </div>
           ) : (
             <div>
           {/* ============================================================
@@ -1359,15 +1378,23 @@ export default function AdminPage() {
             調整エリアの一覧
           </h3>
           <p style={{ fontSize: 12, color: SUB, margin: "0 0 8px" }}>
-            ・調整エリア内の投稿は、建物と反対の外向きにずらし、指定倍率で小さく表示します。
-            <br />
             ・<b>倍率</b>：小さいほど縮みます（0.7〜0.8推奨）。
             <b>余裕(m)</b>：0で端が投稿地点に接します。プラスで離し、マイナスで重なります。
           </p>
-          {fogAreas.length === 0 ? (
-            <p style={{ fontSize: 13, color: SUB }}>まだ登録がありません。</p>
-          ) : (
-            <div style={{ overflowX: "auto" }}>
+          {/* 件数が変わっても枠の大きさは変えない（絞り込みで画面が動かないように） */}
+          <div
+            style={{
+              height: 400,
+              overflow: "auto",
+              border: "1px solid #E7E5E4",
+              borderRadius: 8,
+            }}
+          >
+            {fogAreas.filter(matchAreaQuery).length === 0 ? (
+              <p style={{ fontSize: 13, color: SUB, padding: 12 }}>
+                該当する調整エリアがありません。
+              </p>
+            ) : (
               <table style={{ borderCollapse: "collapse", fontSize: 13, minWidth: 620 }}>
                 <thead>
                   <tr style={{ borderBottom: "2px solid #ddd", textAlign: "left" }}>
@@ -1384,7 +1411,16 @@ export default function AdminPage() {
                     <tr key={a.id} style={{ borderBottom: "1px solid #eee" }}>
                       <td style={{ padding: 8 }}>{a.id}</td>
                       <td style={{ padding: 8 }}>{a.name}</td>
-                      <td style={{ padding: 8, maxWidth: 200, wordBreak: "break-all" }}>
+                      <td
+                        style={{
+                          padding: 8,
+                          maxWidth: 220,
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                        title={a.note ?? ""}
+                      >
                         {a.note ?? "-"}
                       </td>
                       <td style={{ padding: 8 }}>
@@ -1438,9 +1474,8 @@ export default function AdminPage() {
                   ))}
                 </tbody>
               </table>
-            </div>
-          )}
-
+            )}
+          </div>
             </div>
           )}
         </section>
