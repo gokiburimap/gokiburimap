@@ -129,31 +129,21 @@ const CONTACT_EMAIL = "gokiburimap@gmail.com";
 function PrivacyPolicyContent() {
   return (
     <>
-      {/* 冒頭：タイトル・最終更新日を中央揃えの大きめ文字で */}
-      <h2
-        style={{
-          fontSize: 22,
-          fontWeight: 700,
-          color: "#292524",
-          textAlign: "center",
-          margin: "4px 0 6px",
-        }}
-      >
-        プライバシーポリシー
-      </h2>
+      {/* ★2026-07-26：本文タイトルはヘッダーバーのラベルと重複するため削除。
+          最終更新日から始める */}
       <p
         style={{
           fontSize: 12,
           color: "#78716C",
           textAlign: "center",
-          margin: "0 0 24px",
+          margin: "4px 0 24px",
         }}
       >
         最終更新日：（公開日を記載）
       </p>
 
       <Paragraph>
-        ゴキブリマップ（以下「本サービス」）は、ゴキブリの目撃情報を閲覧できる「投稿型の地図サービス」です。本サービスは、個人情報の保護に関する法律、その他の関連法令を遵守し、収集する情報を適切に取り扱います。
+        ゴキブリマップ（以下「本サービス」）は、ゴキブリの目撃情報を閲覧できる「投稿型の地図サービス」です。本サービスは個人情報の保護に関する法律、その他の関連法令を遵守し、収集する情報を適切に取り扱います。
       </Paragraph>
 
       <hr
@@ -324,23 +314,13 @@ function PrivacyPolicyContent() {
 function AboutContent() {
   return (
     <>
-      <h2
-        style={{
-          fontSize: 22,
-          fontWeight: 700,
-          color: "#292524",
-          textAlign: "center",
-          margin: "4px 0 24px",
-        }}
-      >
-        本サービスについて
-      </h2>
-
+      {/* ★2026-07-26：本文タイトルはヘッダーバーのラベルと重複するため削除。
+          区切り線から始める */}
       <hr
         style={{
           border: "none",
           borderTop: "1px solid #eee",
-          margin: "0 0 8px",
+          margin: "4px 0 8px",
         }}
       />
 
