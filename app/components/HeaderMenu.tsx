@@ -16,6 +16,14 @@ import { useEffect, useState, type ReactNode } from "react";
 // ============================================================
 
 // ------------------------------------------------------------
+// オーバーレイパネル本文の最大幅（PestMap等を参考に、Web版で横に
+// 広がりすぎないよう中央寄せにするための値）。
+// ★幅を変えたいときはこの数値だけを書き換えればよい。
+// スマホ（画面幅がこれより狭い場合）は今まで通り全幅で表示される。
+// ------------------------------------------------------------
+const PANEL_CONTENT_MAX_WIDTH = 640;
+
+// ------------------------------------------------------------
 // オーバーレイパネル本文用の小さな見た目パーツ
 // プライバシーポリシーのような長文・見出し付きの本文を、
 // よくある規約ページのレイアウト（縦線付き見出し／段落ごとの
@@ -328,15 +336,23 @@ function AboutContent() {
         本サービスについて
       </h2>
 
+      <hr
+        style={{
+          border: "none",
+          borderTop: "1px solid #eee",
+          margin: "0 0 8px",
+        }}
+      />
+
       <Section title="サービスの目的">
         <Paragraph>
-          ゴキブリマップは、ゴキブリの目撃情報を地図上に可視化して、みんなで共有するための「投稿型の地図サービス」です。
+          ゴキブリマップは、ゴキブリの目撃情報を地図上に可視化した「投稿型の地図サービス」です。
         </Paragraph>
         <Paragraph>
-          引越し前の環境チェックはもちろん、身の回りの衛生状況が気になるときにも、参考情報としてお役立ていただければと思っています。
+          引越し前の環境チェックはもちろん、身の回りの衛生状況が気になるときにも、参考情報としてお役立ていただけます。
         </Paragraph>
         <Paragraph>
-          なお、本サービスは特定の地域や施設、個人を貶める目的のサービスではありません。情報をオープンに共有することで、住環境の改善につながることを目指しています。
+          なお、本サービスは特定の地域や施設を貶める目的のサービスではありません。情報をオープンに共有することで、住環境の改善につながることを目指しています。
         </Paragraph>
       </Section>
 
@@ -345,7 +361,7 @@ function AboutContent() {
           本サービスでは、建物・施設を特定できるピン表示はあえて行わず、複数の投稿をまとめて匿名化した「色分けエリア表示」のみを掲載しています。
         </Paragraph>
         <Paragraph>
-          特定の建物・施設が名指しで晒されることのないよう配慮した上で、ゴキブリの発生傾向という情報だけを、地域単位で分かりやすくお届けすることを目指しています。
+          特定の建物・施設が名指しで晒されることのないよう配慮した上で、ゴキブリの発生傾向という情報だけを、地域単位でお届けすることを目指しています。
         </Paragraph>
       </Section>
 
@@ -372,27 +388,35 @@ function AboutContent() {
       >
         運営者
       </h3>
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <div
-          style={{
-            width: 48,
-            height: 48,
-            borderRadius: "50%",
-            background: "#fafaf9",
-            border: "1px solid #eee",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            overflow: "hidden",
-            flexShrink: 0,
-          }}
-        >
-          <img src="/roach-icon.png" alt="" style={{ width: 28, height: 28, objectFit: "contain" }} />
+      <Box>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div
+            style={{
+              width: 56,
+              height: 56,
+              borderRadius: "50%",
+              background: "#fff",
+              border: "1px solid #eee",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              overflow: "hidden",
+              flexShrink: 0,
+            }}
+          >
+            <img src="/roach-icon.png" alt="" style={{ width: 32, height: 32, objectFit: "contain" }} />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: "#292524" }}>
+              ゴキブリマップ運営　ゴキ
+            </span>
+            {/* ★ここにお問い合わせ用アドレス・note等のURLを入れる（2行目） */}
+            <span style={{ fontSize: 12, color: "#78716C" }}>
+              （ここにアドレス・URLを記載）
+            </span>
+          </div>
         </div>
-        <span style={{ fontSize: 14, fontWeight: 700, color: "#292524" }}>
-          ゴキブリマップ運営　ゴキ
-        </span>
-      </div>
+      </Box>
     </>
   );
 }
@@ -617,42 +641,52 @@ export default function HeaderMenu() {
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
-              padding: "16px",
+              padding: "16px 20px",
               borderBottom: "1px solid #eee",
               flexShrink: 0,
             }}
           >
-            <span style={{ fontSize: 16, fontWeight: 700, color: "#292524" }}>
-              {activeItem.label}
-            </span>
-            <button
-              aria-label="閉じる"
-              onClick={() => setActiveModal(null)}
-              style={{
-                border: "none",
-                background: "transparent",
-                fontSize: 22,
-                color: "#662510",
-                cursor: "pointer",
-                lineHeight: 1,
-                padding: 4,
-              }}
-            >
-              ×
-            </button>
+            <div style={{ width: "100%", maxWidth: PANEL_CONTENT_MAX_WIDTH, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ fontSize: 16, fontWeight: 700, color: "#292524" }}>
+                {activeItem.label}
+              </span>
+              <button
+                aria-label="閉じる"
+                onClick={() => setActiveModal(null)}
+                style={{
+                  border: "none",
+                  background: "transparent",
+                  fontSize: 22,
+                  color: "#662510",
+                  cursor: "pointer",
+                  lineHeight: 1,
+                  padding: 4,
+                }}
+              >
+                ×
+              </button>
+            </div>
           </div>
           <div
             style={{
               flex: 1,
               overflowY: "auto",
               padding: "20px",
-              fontSize: 14,
-              lineHeight: 1.8,
-              color: "#292524",
-              whiteSpace: "pre-wrap",
             }}
           >
-            {activeItem.content}
+            <div
+              style={{
+                width: "100%",
+                maxWidth: PANEL_CONTENT_MAX_WIDTH,
+                margin: "0 auto",
+                fontSize: 14,
+                lineHeight: 1.8,
+                color: "#292524",
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              {activeItem.content}
+            </div>
           </div>
         </div>
       )}
