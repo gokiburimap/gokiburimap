@@ -34,6 +34,16 @@ const PANEL_CONTENT_MAX_WIDTH = 640;
 const CONTACT_EMAIL = "gokiburimap@gmail.com";
 
 // ------------------------------------------------------------
+// 初回訪問時のウェルカム画面
+// ★2026-07-26：新規追加。初回のみ全画面で表示し、「地図をみる」で閉じる。
+//   閉じたことは localStorage に記録する（Cookieではなく外部送信も
+//   伴わないため、プライバシーポリシーへの追記は不要と判断）。
+// ★文言を出し分けたくなった場合は、キーの末尾の _v1 を _v2 等に
+//   変更すれば、既存の利用者にも再度表示できる。
+// ------------------------------------------------------------
+const WELCOME_STORAGE_KEY = "gokiburimap_welcome_seen_v1";
+
+// ------------------------------------------------------------
 // ★★★ 要同期：色分けエリア表示の配色 ★★★
 //
 // AppleMap.tsx の COUNT_COLOR_BUCKETS から「色だけ」を書き写したもの。
@@ -676,6 +686,64 @@ function AboutContent() {
   );
 }
 
+// ------------------------------------------------------------
+// 「お問い合わせ」本文
+// ★2026-07-26：新規追加。
+//   ・「通報」という言葉は使わない（審査体制があるという印象を避けるため）。
+//   ・削除依頼を前提にした書き方にしない。本サービスは個別のピンを
+//     表示していないため、利用者が「どの投稿か」を指定できない。
+//     場所の情報だけをお願いする形にしてある。
+//   ・対応内容の約束はプライバシーポリシーの範囲を超えないこと。
+// ------------------------------------------------------------
+function ContactContent() {
+  return (
+    <>
+      <Section title="お問い合わせについて">
+        <Paragraph>
+          本サービスへのご意見・ご質問、地図の内容に関するご連絡は、下記の窓口までお寄せください。
+        </Paragraph>
+      </Section>
+
+      <Section title="お問い合わせ先">
+        <Box>
+          <Paragraph>
+            <a
+              href={`mailto:${CONTACT_EMAIL}`}
+              style={{ color: "#292524", fontWeight: 700, textDecoration: "underline" }}
+            >
+              {CONTACT_EMAIL}
+            </a>
+          </Paragraph>
+        </Box>
+      </Section>
+
+      <Section title="ご連絡の際のお願い">
+        <Paragraph>
+          地図の内容についてのご連絡の場合は、場所（住所、または地図上のおおよその位置）を添えていただけますと、確認がスムーズです。
+        </Paragraph>
+      </Section>
+
+      {/* 最後のセクションは区切り線が不要なので、Sectionを使わず直接記述 */}
+      <h3
+        style={{
+          fontSize: 17,
+          fontWeight: 700,
+          color: "#292524",
+          margin: "28px 0 12px",
+          paddingLeft: 12,
+          borderLeft: "4px solid #662510",
+          lineHeight: 1.4,
+        }}
+      >
+        ご返信について
+      </h3>
+      <Paragraph>
+        個人で運営しているため、お返事までにお時間をいただく場合があります。また、お問い合わせの内容によっては、ご返信できない場合がございますので、あらかじめご了承ください。
+      </Paragraph>
+    </>
+  );
+}
+
 // ============================================================
 // メニュー項目の定義
 //
@@ -709,6 +777,12 @@ const MENU_ITEMS: MenuItem[] = [
     content: <AboutContent />,
   },
   {
+    label: "お問い合わせ",
+    kind: "modal",
+    modalKey: "contact",
+    content: <ContactContent />,
+  },
+  {
     label: "プライバシーポリシー",
     kind: "modal",
     modalKey: "privacy",
@@ -722,14 +796,41 @@ export default function HeaderMenu() {
   // ★2026-07-24追加：開いているオーバーレイパネルのキー（無ければnull）
   const [activeModal, setActiveModal] = useState<string | null>(null);
 
+  // ★2026-07-26追加：初回訪問時のウェルカム画面
+  const [showWelcome, setShowWelcome] = useState(false);
+
   // 今開いているモーダルの中身を探しておく
   const activeItem = MENU_ITEMS.find(
     (item) => item.kind === "modal" && item.modalKey === activeModal
   ) as Extract<MenuItem, { kind: "modal" }> | undefined;
 
+  // ウェルカム画面を出すかどうかの判定。
+  // ★localStorage はサーバー側の描画時には存在しないため、必ず
+  //   useEffect の中（＝ブラウザ上で実行された後）で読むこと。
+  // ★プライベートブラウズ等で localStorage が使えない場合は、閉じた
+  //   ことを記録できず毎回表示されてしまうので、表示しない側に倒す。
+  useEffect(() => {
+    try {
+      if (!window.localStorage.getItem(WELCOME_STORAGE_KEY)) {
+        setShowWelcome(true);
+      }
+    } catch {
+      // 何もしない（表示しない）
+    }
+  }, []);
+
+  const closeWelcome = () => {
+    try {
+      window.localStorage.setItem(WELCOME_STORAGE_KEY, "1");
+    } catch {
+      // 記録できなくても画面は閉じる
+    }
+    setShowWelcome(false);
+  };
+
   // 開いている間は背景（地図）のスクロール・タッチを止める
   useEffect(() => {
-    if (open) {
+    if (open || showWelcome) {
       document.body.style.overflow = "hidden";
     } else {
       document.body.style.overflow = "";
@@ -737,7 +838,7 @@ export default function HeaderMenu() {
     return () => {
       document.body.style.overflow = "";
     };
-  }, [open]);
+  }, [open, showWelcome]);
 
   return (
     <>
@@ -948,6 +1049,88 @@ export default function HeaderMenu() {
             >
               {activeItem.content}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================
+          👋 初回訪問時のウェルカム画面（2026-07-26 追加）
+          ★zIndexは5000。オーバーレイパネル(4000)より手前に出す。
+            今後さらに手前へ重ねる要素を追加する場合は5000より大きい値を使う。
+          ★「地図をみる」で閉じ、以後は表示されない（localStorageに記録）。
+         ============================================================ */}
+      {showWelcome && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "#ffffff",
+            zIndex: 5000,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "24px",
+            touchAction: "auto",
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 360,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              textAlign: "center",
+            }}
+          >
+            <img
+              src="/roach-icon.png"
+              alt=""
+              style={{ width: 80, height: 80, objectFit: "contain", marginBottom: 20 }}
+            />
+
+            <h2
+              style={{
+                fontSize: 20,
+                fontWeight: 700,
+                color: "#292524",
+                margin: "0 0 16px",
+                lineHeight: 1.4,
+              }}
+            >
+              ゴキブリマップへようこそ
+            </h2>
+
+            {/* ★JSXは改行を半角スペースに変換するため、日本語では文の間に
+                余計な空白が入ってしまう。1文ずつ<p>に分けて回避している。 */}
+            <div style={{ margin: "0 0 28px" }}>
+              <p style={{ fontSize: 14, lineHeight: 1.9, color: "#292524", margin: 0 }}>
+                ゴキブリの目撃情報を、みんなで共有する地図サービスです。
+              </p>
+              <p style={{ fontSize: 14, lineHeight: 1.9, color: "#292524", margin: 0 }}>
+                あなたの1件が、誰かの参考になります。
+              </p>
+              <p style={{ fontSize: 14, lineHeight: 1.9, color: "#292524", margin: 0 }}>
+                どうぞご自由にお使いください。
+              </p>
+            </div>
+
+            <button
+              onClick={closeWelcome}
+              style={{
+                width: "100%",
+                padding: "14px 20px",
+                borderRadius: 8,
+                border: "none",
+                background: "#662510",
+                color: "#ffffff",
+                fontSize: 15,
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              地図をみる
+            </button>
           </div>
         </div>
       )}
