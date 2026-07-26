@@ -43,17 +43,16 @@ const CONTACT_EMAIL = "gokiburimap@gmail.com";
 //   （AppleMap.tsx を触りたくないという判断のため、あえて import せず
 //     重複させている。ズレても地図側の動作には影響せず、ガイドの凡例の
 //     色が古いままになるだけ）
-// ・件数の閾値（1〜20件 等）はここには持たない。閾値は運用しながら
-//   調整する可能性が高く、同期漏れが起きやすいため、ガイドの凡例では
-//   「少ない → 多い」の並びだけを示す方針とした。
-//   正確な件数は地図下部の凡例で確認できる。
+// ・件数のラベルも AppleMap.tsx の label と同じ文字列を持たせている。
+//   （件数の無い凡例は凡例として機能しないため。閾値を変更したときは
+//     色と同様、こちらのラベルも直すこと）
 // ------------------------------------------------------------
 const GUIDE_LEGEND_COLORS = [
-  "94, 189, 172", // 青緑
-  "255, 209, 84", // 黄色
-  "255, 140, 43", // オレンジ
-  "224, 61, 40", // 赤
-  "106, 64, 205", // 紫
+  { rgb: "94, 189, 172", label: "1〜20件" }, // 青緑
+  { rgb: "255, 209, 84", label: "21〜40件" }, // 黄色
+  { rgb: "255, 140, 43", label: "41〜60件" }, // オレンジ
+  { rgb: "224, 61, 40", label: "61〜80件" }, // 赤
+  { rgb: "106, 64, 205", label: "81件以上" }, // 紫
 ];
 
 // ------------------------------------------------------------
@@ -166,58 +165,102 @@ function Box({ children }: { children: ReactNode }) {
 // JSXで組めば上記がすべて解消でき、パネル幅にも自動で追従する。
 // ------------------------------------------------------------
 
-// 🪳アイコン＋数字のバッジ（円モードの見た目の再現）
-// ★実際の地図の描画（Canvas 2D で生成）と細部が違う場合は、
-//   下の width / fontSize / border の値を調整すること。
-function CountBadgeFigure() {
+// 図の共通の入れ物。文章との境目をはっきりさせ、前後の余白を確保する。
+// ★2026-07-26：図と文章が詰まって見えるという指摘を受けて追加。
+function Figure({ children, caption }: { children: ReactNode; caption?: string }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 14, margin: "14px 0" }}>
+    <div style={{ margin: "20px 0 24px" }}>
       <div
         style={{
-          width: 64,
-          height: 64,
-          borderRadius: "50%",
-          background: "#ffffff",
-          border: "2px solid #662510",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 1,
-          flexShrink: 0,
+          border: "1px solid #eee",
+          borderRadius: 8,
+          background: "#fafaf9",
+          padding: "18px 16px",
         }}
       >
-        <img src="/roach-icon.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
-        <span style={{ fontSize: 13, fontWeight: 700, color: "#292524", lineHeight: 1 }}>36</span>
+        {children}
       </div>
-      <p style={{ fontSize: 12, lineHeight: 1.7, color: "#78716C", margin: 0 }}>
-        ※数字は、周辺にある目撃情報をまとめた件数です。
-      </p>
+      {caption && (
+        <p style={{ fontSize: 12, lineHeight: 1.7, color: "#78716C", margin: "8px 0 0" }}>
+          {caption}
+        </p>
+      )}
     </div>
   );
 }
 
-// 色分けエリア表示の凡例（件数の表記は入れず、色の並びだけを示す）
+// 🪳アイコン＋数字のバッジ（円モードの見た目の再現）
+// ★実際の地図の描画（Canvas 2D で生成）に合わせている：
+//   ・円の縁取りは無し（アイコンそのものを表示する）
+//   ・数字はアイコンの胴体の上に重ねて配置
+//   ・数字は白文字＋黒フチ（paintOrder:"stroke" でフチを文字の下に描く）
+// ★実物と細部が違う場合は、下の BADGE_SIZE / fontSize / top の値、
+//   および WebkitTextStroke の太さを調整すること。
+const BADGE_SIZE = 72;
+
+function CountBadgeFigure() {
+  return (
+    <Figure caption="※数字は、周辺にある目撃情報をまとめた件数です。">
+      <div style={{ display: "flex", justifyContent: "center" }}>
+        <div style={{ position: "relative", width: BADGE_SIZE, height: BADGE_SIZE }}>
+          <img
+            src="/roach-icon.png"
+            alt=""
+            style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
+          />
+          <span
+            style={{
+              position: "absolute",
+              left: 0,
+              right: 0,
+              // 胴体の中心あたりに重ねる。実物とズレる場合はこの値を調整する
+              top: "52%",
+              transform: "translateY(-50%)",
+              textAlign: "center",
+              fontSize: 20,
+              fontWeight: 700,
+              lineHeight: 1,
+              color: "#ffffff",
+              WebkitTextStroke: "3px #000000",
+              paintOrder: "stroke",
+            }}
+          >
+            36
+          </span>
+        </div>
+      </div>
+    </Figure>
+  );
+}
+
+// 色分けエリア表示の凡例
+// ★2026-07-26：件数の表記を入れる方針に変更（件数の無い凡例は凡例として
+//   機能しないため）。ラベルは AppleMap.tsx の COUNT_COLOR_BUCKETS の
+//   label と同じ文字列。閾値を変更したら、こちらも直すこと。
+// ★横並び5分割ではスマホで1枠あたり約68pxとなり「21〜40件」が収まらない
+//   ため、縦並びにしている。
 function ColorLegendFigure() {
   return (
-    <div style={{ margin: "14px 0" }}>
-      <div
-        style={{
-          display: "flex",
-          borderRadius: 6,
-          overflow: "hidden",
-          border: "1px solid #eee",
-        }}
-      >
-        {GUIDE_LEGEND_COLORS.map((rgb) => (
-          <div key={rgb} style={{ flex: 1, height: 22, background: `rgb(${rgb})` }} />
+    <Figure>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {GUIDE_LEGEND_COLORS.map((bucket) => (
+          <div key={bucket.label} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span
+              style={{
+                width: 28,
+                height: 16,
+                borderRadius: 3,
+                background: `rgb(${bucket.rgb})`,
+                flexShrink: 0,
+              }}
+            />
+            <span style={{ fontSize: 13, lineHeight: 1.4, color: "#292524" }}>
+              {bucket.label}
+            </span>
+          </div>
         ))}
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
-        <span style={{ fontSize: 12, color: "#78716C" }}>少ない</span>
-        <span style={{ fontSize: 12, color: "#78716C" }}>多い</span>
-      </div>
-    </div>
+    </Figure>
   );
 }
 
@@ -296,7 +339,7 @@ function HowToGuideContent() {
         </List>
         <Box>
           <p style={{ fontSize: 13, lineHeight: 1.8, color: "#292524", margin: 0 }}>
-            確認用のピンは、投稿を終えた直後にのみ表示されます。ご自身で投稿を取り消せるのは、確認用のピンが表示されている間だけです。画面を閉じたり、ページを更新したりすると再表示できませんので、ご注意ください。
+            確認用のピンは、投稿を終えた直後にのみ表示されます。ご自身で投稿を取り消せるのは、確認用のピンが表示されている間だけです。画面を閉じたり、ページ更新したりすると再表示できませんので、ご注意ください。
           </p>
         </Box>
       </Section>
@@ -906,4 +949,3 @@ export default function HeaderMenu() {
     </>
   );
 }
-
