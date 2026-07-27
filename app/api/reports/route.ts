@@ -9,6 +9,7 @@
 //
 // 【この1本で担っていること】
 //   ・レート制限（同一IPからの連続投稿を制限）
+//   ・目撃日の範囲チェック（日本時間で判定。2026-07-26 追加）
 //   ・投稿者情報の記録（IP/UA/時刻 → posting_logs。発信者情報開示請求への備え）
 //   ・削除トークンの発行（本人だけが投稿を取り消せる）
 //   ・reports（公開箱）と report_details（運営箱）への書き分け
@@ -22,6 +23,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { getServiceClient } from "../../lib/supabase-server";
+// ★2026-07-26：目撃日の許容範囲。投稿フォーム側と同じ関数を使うことで、
+//   カレンダーで選べる範囲とサーバーが受け付ける範囲を一致させている。
+import { checkOccurredOnRange } from "../../lib/dateRange";
 
 // ============================================================
 // 🚦【①レート制限の調整はここ】
@@ -80,10 +84,29 @@ export async function POST(req: NextRequest) {
   if (typeof occurred_on !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(occurred_on)) {
     return NextResponse.json({ error: "invalid_date" }, { status: 400 });
   }
-  // 未来の日付は拒否（タイムゾーン差を考慮して1日だけ余裕を持たせる）
-  if (new Date(occurred_on).getTime() > Date.now() + 24 * 60 * 60 * 1000) {
+
+  // ------------------------------------------------------------
+  // ★2026-07-26：目撃日の範囲チェック（過去3年〜当日）
+  //
+  // ★判定は必ず日本時間で行う（dateRange.ts 参照）。
+  //   Vercelのサーバーは通常UTCで動くため、UTCのまま「今日」を計算すると
+  //   日本時間の朝0〜9時の間は前日を「今日」と判断してしまい、
+  //   日本の利用者が朝に「今日見た」と投稿したときに弾かれる。
+  //
+  // ★カレンダー側でも同じ範囲に制限しているが、このAPIは公開されており
+  //   ブラウザを経由せず直接叩けるため、ここでの検証が最終的な砦になる。
+  //
+  // ★範囲を変えたいときは dateRange.ts の MAX_PAST_YEARS を直す。
+  //   フォームのカレンダーにも自動で反映される。
+  // ------------------------------------------------------------
+  const rangeError = checkOccurredOnRange(occurred_on);
+  if (rangeError === "future") {
     return NextResponse.json({ error: "future_date" }, { status: 400 });
   }
+  if (rangeError === "too_old") {
+    return NextResponse.json({ error: "date_too_old" }, { status: 400 });
+  }
+
   if (address != null && (typeof address !== "string" || address.length > MAX_ADDRESS_LENGTH)) {
     return NextResponse.json({ error: "invalid_address" }, { status: 400 });
   }

@@ -4,6 +4,16 @@ import { useState } from "react";
 // ★2026-07-18：supabaseの直接importを廃止。投稿は /api/reports 経由に一本化した
 // （ブラウザからの直接INSERTはRLSで全面禁止済み）
 
+// ★2026-07-26：目撃日の許容範囲を app/lib/dateRange.ts に一本化。
+//   カレンダーの選択範囲と、APIルート側の検証が必ず一致する。
+//   ★このファイルが app/components/ 以外にある場合は、下のパスを直すこと。
+import {
+  MAX_PAST_YEARS,
+  latestAllowedDate,
+  oldestAllowedDate,
+  checkOccurredOnRange,
+} from "../lib/dateRange";
+
 // ============================================================
 // 🪳 投稿直後の確認ピン用の型（2026-07-18 追加）
 //
@@ -35,14 +45,9 @@ interface ReportSidebarProps {
   onSubmitDone: (report?: Report) => void;
 }
 
-// 今日の日付を "YYYY-MM-DD" 形式で返す（<input type="date"> がこの形式を要求する）
-function todayString() {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
+// ★2026-07-26：ローカルの todayString() は廃止。
+//   端末のタイムゾーンで「今日」を決めていたため、サーバー（日本時間で
+//   判定）とズレる可能性があった。latestAllowedDate() に統一している。
 
 export default function ReportSidebar({ lat, lng, prefecture, city, address, onClose, onSubmitDone }: ReportSidebarProps) {
   const [prefectureVal, setPrefectureVal] = useState(prefecture);
@@ -63,9 +68,10 @@ export default function ReportSidebar({ lat, lng, prefecture, city, address, onC
   // 【残した／新設した項目】
   // ・住所       → 逆ジオコーダの自動入力を、本人が手で直せるようにする
   // ・目撃した日付 → 従来の「発生年/月」を、日付そのものに変更
+  //                ★2026-07-26：過去3年〜当日の範囲に制限
   // ・詳細       → 自由記述。★reportsではなくreport_detailsテーブルに入る★
   // ============================================================
-  const [occurredOn, setOccurredOn] = useState(todayString());
+  const [occurredOn, setOccurredOn] = useState(latestAllowedDate());
   const [detail, setDetail] = useState("");
 
   const [loading, setLoading] = useState(false);
@@ -76,6 +82,22 @@ export default function ReportSidebar({ lat, lng, prefecture, city, address, onC
       return;
     }
 
+    // ------------------------------------------------------------
+    // ★2026-07-26：送信前の範囲チェック
+    // <input type="date"> の min/max は、ブラウザによっては手入力を
+    // 止めないことがある。無駄な通信を減らすためにここでも見ておく。
+    // （最終的な砦はAPIルート側の検証）
+    // ------------------------------------------------------------
+    const rangeError = checkOccurredOnRange(occurredOn);
+    if (rangeError === "future") {
+      alert("未来の日付は指定できません。");
+      return;
+    }
+    if (rangeError === "too_old") {
+      alert(`目撃した日付は、${MAX_PAST_YEARS}年前までの日付をご指定ください。`);
+      return;
+    }
+
     setLoading(true);
 
     // ============================================================
@@ -83,6 +105,7 @@ export default function ReportSidebar({ lat, lng, prefecture, city, address, onC
     //
     // サーバー側で以下がまとめて行われる：
     //   ・レート制限（同一IPからの連続投稿チェック）
+    //   ・目撃日の範囲チェック（日本時間で判定）
     //   ・reports（座標・日付）と report_details（住所・詳細）への書き分け
     //   ・投稿者情報（IP/UA/時刻）の記録（発信者情報開示請求への備え）
     //   ・削除トークンの発行（本人だけが取り消せる）
@@ -114,6 +137,12 @@ export default function ReportSidebar({ lat, lng, prefecture, city, address, onC
         } else if (res.status === 403 && json?.error === "excluded_area") {
           // ★403 ＝ 投稿禁止エリア。文言を変えたいときはここ
           alert("この場所への投稿は受け付けていません。");
+        } else if (res.status === 400 && json?.error === "future_date") {
+          // ★400 ＝ 日付が範囲外。通常はカレンダー側で防げるが、
+          //   日付をまたいだ操作や手入力で到達することがある
+          alert("未来の日付は指定できません。");
+        } else if (res.status === 400 && json?.error === "date_too_old") {
+          alert(`目撃した日付は、${MAX_PAST_YEARS}年前までの日付をご指定ください。`);
         } else {
           alert("投稿に失敗しました: " + (json?.error ?? "不明なエラー"));
         }
@@ -231,12 +260,16 @@ export default function ReportSidebar({ lat, lng, prefecture, city, address, onC
           自動入力です。違っていたら直してください。
         </span>
 
+        {/* ★2026-07-26：カレンダーで選べる範囲を「3年前〜当日」に制限。
+            min/max はどちらも日本時間で計算している（dateRange.ts参照）。
+            範囲を変えたいときは dateRange.ts の MAX_PAST_YEARS を直す。 */}
         <label style={labelStyle}>目撃した日付</label>
         <input
           type="date"
           value={occurredOn}
           onChange={e => setOccurredOn(e.target.value)}
-          max={todayString()}
+          min={oldestAllowedDate()}
+          max={latestAllowedDate()}
           style={narrowStyle}
         />
 
