@@ -1319,7 +1319,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   //   スマホ：左下（🍎リーガル表示の上）に固定・PCよりやや小さめ
   // font=文字サイズ / swatch=色見本の四角の大きさ / pad=箱の内側余白
   // ============================================================
-  const LEGEND_PC = { bottom: 36, left: 15, font: 15, swatch: 20, pad: "12px 20px", line: 2.0 };
+  const LEGEND_PC = { top: 50, right: 15, font: 15, swatch: 20, pad: "12px 20px", line: 2.0 };
   const LEGEND_SP = { bottom: 36, left: 10, font: 13, swatch: 16, pad: "10px 14px", line: 1.8 };
   const [legendCollapsed, setLegendCollapsed] = useState(false);
 
@@ -1961,6 +1961,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         }, SETTLE_MS);
       });
       // 次の操作が始まったら、予約中の作り直しは取り消す（操作中は作らない）
+
       map.addEventListener("region-change-start", () => {
         if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
       });
@@ -2437,7 +2438,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
           position: "absolute",
           ...(isMobile
             ? { bottom: LEGEND_SP.bottom, left: LEGEND_SP.left }
-            : { bottom: LEGEND_PC.bottom, left: LEGEND_PC.left }),
+            : { top: LEGEND_PC.top, right: LEGEND_PC.right }),
          
           background: "white",
           borderRadius: 8,
