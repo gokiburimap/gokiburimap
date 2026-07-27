@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 // ★2026-07-18：supabaseの直接importを廃止。投稿は /api/reports 経由に一本化した
 // （ブラウザからの直接INSERTはRLSで全面禁止済み）
 
@@ -53,6 +53,31 @@ export default function ReportSidebar({ lat, lng, prefecture, city, address, onC
   const [prefectureVal, setPrefectureVal] = useState(prefecture);
   const [cityVal, setCityVal] = useState(city);
   const [addressVal, setAddressVal] = useState(address);
+
+  // ============================================================
+  // ★2026-07-27：住所が遅れて届いたときの取り込み（不具合修正）
+  //
+  // 【何が起きていたか】
+  // useState は最初の1回しか初期値を読まない。逆ジオコーダの応答が
+  // 返る前にこのフォームが開くと、空文字のまま固定され、あとから
+  // 住所が届いても永久に反映されなかった。
+  //
+  // ローカルでは応答が速いので届いてから開き、Vercelでは1秒以上
+  // かかるため先に開いてしまう。動くかどうかが運任せになっていた。
+  //
+  // 【対処】
+  // 親(page.tsx)から渡される住所が変わったら、フォームに取り込む。
+  //
+  // ★注意：この取り込みは、利用者が手で直した内容を上書きする。
+  //   親が住所を渡し直すのは「新しい地点を選んだとき」だけなので
+  //   通常は問題にならないが、フォームを開いたまま住所を再取得する
+  //   作りに変える場合は、ここも見直すこと。
+  // ============================================================
+  useEffect(() => {
+    setPrefectureVal(prefecture);
+    setCityVal(city);
+    setAddressVal(address);
+  }, [prefecture, city, address]);
 
   // ============================================================
   // 📝 収集項目（2026-07-18 全面見直し）
