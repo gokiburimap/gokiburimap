@@ -1319,7 +1319,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   //   スマホ：左下（🍎リーガル表示の上）に固定・PCよりやや小さめ
   // font=文字サイズ / swatch=色見本の四角の大きさ / pad=箱の内側余白
   // ============================================================
-  const LEGEND_PC = { top: 12, right: 15, font: 15, swatch: 20, pad: "12px 20px", line: 2.0 };
+  const LEGEND_PC = { bottom: 36, left: 15, font: 15, swatch: 20, pad: "12px 20px", line: 2.0 };
   const LEGEND_SP = { bottom: 36, left: 10, font: 13, swatch: 16, pad: "10px 14px", line: 1.8 };
   const [legendCollapsed, setLegendCollapsed] = useState(false);
 
@@ -1721,8 +1721,12 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         showsZoomControl: false,
         showsCompass: "hidden",
         isRotationEnabled: false,
-        // ★2026-07-19 スマホ対応：右上の「位置情報」「航空写真」ボタンを非表示に
-        showsUserLocationControl: false,
+       // ★2026-07-27：現在地ボタンを復活（右上）。MapKit標準の部品なので、
+        //   見た目・アイコンが地図アプリの一般的なものと揃い、説明不要で伝わる。
+        //   凡例をPCも左下へ移したので、重なりは発生しない。
+        //   位置情報の許可ダイアログは、ボタンを押した瞬間にだけ出る。
+        showsUserLocationControl: true,
+        // 航空写真の切り替えは引き続き非表示
         showsMapTypeControl: false,
       });
 
@@ -1959,6 +1963,38 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       // 次の操作が始まったら、予約中の作り直しは取り消す（操作中は作らない）
       map.addEventListener("region-change-start", () => {
         if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
+      });
+
+      // ============================================================
+      // 📍 現在地ボタンを押したときの縮尺（2026-07-27 追加）
+      //
+      // MapKit標準の現在地ボタンは、飛んだ先の縮尺を指定できない。
+      // そこで、現在地が届いた時点で建物が見える程度まで寄せ直す。
+      //
+      // ★寄せすぎない理由★
+      // 屋内ではGPSに数十mの誤差が出る。限界まで寄せると、ずれている
+      // ことに気づかないまま隣の建物で投稿されてしまう。少し引いた
+      // 状態で止め、最後は本人に位置を合わせてもらう。
+      //
+      // ★すでに十分寄っているときは何もしない★
+      // 現在地は数秒おきに更新される。毎回寄せ直すと、利用者が自分で
+      // ズームや移動をしても引き戻されてしまうため。
+      // ============================================================
+      const USER_LOCATION_SPAN = 0.002; // 約200m四方。数値を小さくすると寄る
+
+      map.addEventListener("user-location-change", (event: any) => {
+        try {
+          if (map.region.span.latitudeDelta <= USER_LOCATION_SPAN * 1.5) return;
+          const c = event.coordinate;
+          map.setRegionAnimated(
+            new window.mapkit.CoordinateRegion(
+              new window.mapkit.Coordinate(c.latitude, c.longitude),
+              new window.mapkit.CoordinateSpan(USER_LOCATION_SPAN, USER_LOCATION_SPAN)
+            )
+          );
+        } catch {
+          /* 座標が取れなかった場合は、MapKit標準の動きに任せる */
+        }
       });
 
       renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
@@ -2401,7 +2437,8 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
           position: "absolute",
           ...(isMobile
             ? { bottom: LEGEND_SP.bottom, left: LEGEND_SP.left }
-            : { top: LEGEND_PC.top, right: LEGEND_PC.right }),
+            : { bottom: LEGEND_PC.bottom, left: LEGEND_PC.left }),
+         
           background: "white",
           borderRadius: 8,
           padding: isMobile ? LEGEND_SP.pad : LEGEND_PC.pad,
