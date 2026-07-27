@@ -126,20 +126,94 @@ export default function Home() {
     setStep("selecting");
   };
 
+  // ============================================================
+  // 🗺 地図がタップされた／住所が後から届いたときの処理
+  //
+  // ★2026-07-27 修正（住所が入らない不具合）★
+  //
+  // 【何が起きていたか】
+  // AppleMap.tsx の performTapAction は onMapClick を2回呼ぶ。
+  //   ①タップ直後      … onMapClick(lat, lng)          住所なし。ピンだけ立てる
+  //   ②1秒前後あとで   … onMapClick(lat, lng, geoData) 住所が届いた
+  // 旧実装は step が "selecting" か "dragging" のときしか受け取らず、
+  // 利用者が②より先に「目撃情報を入力」を押して step が "inputting" に
+  // なっていると、②の住所が【捨てられていた】。
+  // ＝フォームが空欄のまま、待っても永久に入らない。
+  //
+  // ローカルでは逆ジオコーディングが速く、②が先に届いていたため
+  // 気づけなかった。Vercelは米国リージョンで動くぶん遅く（1.25秒）、
+  // 本番でだけ再現していた。
+  //
+  // 【もうひとつの問題】
+  // ②で setPos({lat, lng}) を呼んでいたため、毎回「新しいオブジェクト」
+  // になり、AppleMap側の useEffect([reportPos]) がピンを作り直していた。
+  // ＝住所が届いた瞬間にピンがピカッと光る（吹き出しが開き直る）。
+  // 住所が届いただけでピンの位置は動いていないので、setPosは不要。
+  //
+  // 【対処】
+  //   ・住所だけが後から届いた場合は、setPos を呼ばず住所だけ差し込む
+  //   ・step が "inputting" のときは、この経路では受け取らない
+  //     （確定位置での取り直しを handleStartInput 側でやっているため、
+  //       ドラッグ前の古い座標の結果で上書きしないようにする）
+  // ============================================================
   const handleMapClick = (lat: number, lng: number, geo?: GeoData) => {
     if (step === "selecting") {
       setPos({ lat, lng });
       setGeoData(geo ?? null);
       setStep("dragging");
-    } else if (step === "dragging") {
-      setPos({ lat, lng });
-      setGeoData(geo ?? null);
+      return;
     }
+
+    if (step === "dragging") {
+      // 住所だけが後から届いた場合：ピンの位置には触らない
+      if (geo) {
+        setGeoData(geo);
+        return;
+      }
+      // 位置を選び直すタップ：住所は取り直しになるので一度空にする
+      setPos({ lat, lng });
+      setGeoData(null);
+    }
+    // step === "inputting" のときは何もしない（下の handleStartInput 参照）
   };
 
-  const handleStartInput = (lat: number, lng: number) => {
+  // ============================================================
+  // 📝 「目撃情報を入力」が押されたとき
+  //
+  // ★2026-07-27 追加：確定した位置で住所を取り直す★
+  //
+  // 【なぜ必要か】
+  // ピンは白い吹き出しをドラッグして動かせるが、ドラッグは
+  // AppleMap.tsx 側で reportPosRef を直接書き換えているだけで、
+  // 逆ジオコーディングを呼び直していない。そのため旧実装では、
+  // ドラッグして位置を変えても【最初にタップした地点の住所】が
+  // フォームに入ってしまい、位置と住所が食い違っていた。
+  //
+  // ここで取り直せば、フォームに入る住所は必ず確定位置のものになる。
+  //
+  // 【体感について】
+  // フォーム自体は即座に開き、住所だけが少し遅れて入る。
+  // ReportSidebar側は useEffect で受け取れるようにしてあるので、
+  // 開いた後に届いても正しく反映される。
+  //
+  // 【失敗時】
+  // 通信失敗・住所が取れなかった場合は、いま持っている住所を
+  // そのまま残す（空欄になるより、少し古くても入っている方がよい。
+  // 利用者が手で直せる）。
+  // ============================================================
+  const handleStartInput = async (lat: number, lng: number) => {
     setPos({ lat, lng });
     setStep("inputting");
+
+    try {
+      const res = await fetch(`/api/reverse-geocode?lat=${lat}&lon=${lng}`);
+      const geo = await res.json();
+      if (!geo?.error && !geo?.outOfService) {
+        setGeoData(geo);
+      }
+    } catch {
+      /* 通信失敗時は現在の住所を維持（手入力できる） */
+    }
   };
 
   const handleCancel = () => {
