@@ -1329,7 +1329,10 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   //   スマホ：左下（🍎リーガル表示の上）に固定・PCよりやや小さめ
   // font=文字サイズ / swatch=色見本の四角の大きさ / pad=箱の内側余白
   // ============================================================
-  const LEGEND_PC = { top: 50, right: 10, font: 15, swatch: 20, pad: "12px 20px", line: 2.0 };
+  // ★2026-07-27：PCの top を 50→58 に変更。右上に現在地ボタン
+  //   （top:12・高さ34px＝12〜46pxを占有）を置いたため、重なりを避けている。
+  //   現在地ボタンの位置や大きさを変えたら、この値も見直すこと。
+  const LEGEND_PC = { top: 58, right: 10, font: 15, swatch: 20, pad: "12px 20px", line: 2.0 };
   const LEGEND_SP = { bottom: 36, left: 10, font: 13, swatch: 16, pad: "10px 14px", line: 1.8 };
   const [legendCollapsed, setLegendCollapsed] = useState(false);
 
@@ -1358,9 +1361,12 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   const LOCATE_PC = { top: 12, right: 10 };
   const LOCATE_SP = { top: 8, right: 12 };
 
-  // ボタンの直径(px)。住所検索バーの高さ（約34px）に合わせてある。
-  // ★大きすぎる／小さすぎると感じたらこの数値を変える。
-  const LOCATE_SIZE = 36;
+  // ボタンの直径(px)。
+  // ★住所検索バーの高さと同じ値にすること★
+  //   検索バーの高さ ＝ 上下パディング8px×2 ＋ 中身18px ＝ 34px。
+  //   top を揃えたうえで高さも同じにすると、上端も下端もぴったり並ぶ。
+  //   検索バーのパディングや文字サイズを変えたら、この値も見直すこと。
+  const LOCATE_SIZE = 34;
 
   // 飛んだ先の縮尺。★数値を小さくするほど寄る★
   //   0.002  … 約220m四方
@@ -2515,9 +2521,24 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
           opacity: locating ? 0.6 : 1,
         }}
       >
-        {/* 地図アプリで一般的な「現在地」の矢印。色は標準に近い濃いグレー。
-            ★ブランドカラーにしたい場合は fill を "#662510" に変える。 */}
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="#333333" style={{ display: "block" }}>
+        {/* 地図アプリで一般的な「現在地」の矢印。ベタ塗りは悪目立ちするため
+            線画にしてある。
+            ★色を変えたいときは stroke の値を変える。
+              "#333333" … 濃いグレー（現在の設定）
+              "#1A73E8" … Googleマップに近い青
+              "#662510" … ブランドカラー
+            ★線の太さは strokeWidth で調整する。 */}
+        <svg
+          width="20"
+          height="20"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="#333333"
+          strokeWidth="1.8"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+          style={{ display: "block" }}
+        >
           <path d="M21 3L3 10.53v.98l6.84 2.65L12.48 21h.98L21 3z" />
         </svg>
       </button>
