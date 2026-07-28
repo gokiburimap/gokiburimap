@@ -103,3 +103,19 @@ body {
   border: none;
   cursor: pointer;
 }
+/* ============================================================
+   ★2026-07-27：MapKit標準の現在地ボタンの見た目を整える
+   Tailwindの初期化スタイル(svg { display: block })が当たると、
+   アイコンのviewBox(45×24)の比率がそのままボタンの形になり、
+   横長に潰れてしまう。ボタンを正方形に固定して中で収める。
+   ★大きさを変えたいときは、下の40pxの2箇所を変える。
+   ============================================================ */
+.mk-user-location-control {
+  width: 40px !important;
+  height: 40px !important;
+}
+
+.mk-user-location-control .mk-icon {
+  width: 100% !important;
+  height: 100% !important;
+}

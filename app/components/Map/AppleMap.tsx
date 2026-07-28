@@ -1319,7 +1319,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   //   スマホ：左下（🍎リーガル表示の上）に固定・PCよりやや小さめ
   // font=文字サイズ / swatch=色見本の四角の大きさ / pad=箱の内側余白
   // ============================================================
-  const LEGEND_PC = { top: 50, right: 15, font: 15, swatch: 20, pad: "12px 20px", line: 2.0 };
+  const LEGEND_PC = { top: 50, right: 10, font: 15, swatch: 20, pad: "12px 20px", line: 2.0 };
   const LEGEND_SP = { bottom: 36, left: 10, font: 13, swatch: 16, pad: "10px 14px", line: 1.8 };
   const [legendCollapsed, setLegendCollapsed] = useState(false);
 
@@ -1984,6 +1984,28 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       const USER_LOCATION_SPAN = 0.002; // 約200m四方。数値を小さくすると寄る
 
       map.addEventListener("user-location-change", (event: any) => {
+        // ------------------------------------------------------------
+        // ★2026-07-27：現在地マーカーをタップに反応させない
+        //
+        // 現在地の青い点・精度円は、MapKitが独自に立てるマーカー。
+        // 既定ではタップすると「現在地：〜」の吹き出しが開いてしまい、
+        // 投稿位置を選ぶときに、その範囲だけ地図をタップできなくなる。
+        // 触覚を落として、下の地図にタップを素通しさせる。
+        //
+        // ★現在地は数秒おきに更新されるため、この処理も毎回走る。
+        //   MapKit側がマーカーを作り直しても、すぐ無効化し直される。
+        // ------------------------------------------------------------
+        try {
+          const ula = map.userLocationAnnotation;
+          if (ula) {
+            ula.calloutEnabled = false;
+            ula.enabled = false;
+            ula.selected = false;
+          }
+        } catch {
+          /* 取得できない環境では何もしない */
+        }
+
         try {
           if (map.region.span.latitudeDelta <= USER_LOCATION_SPAN * 1.5) return;
           const c = event.coordinate;
