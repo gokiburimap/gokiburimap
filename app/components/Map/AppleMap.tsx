@@ -1359,7 +1359,11 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   //   ★片方を動かしたら、もう片方も合わせること。
   // ============================================================
   const LOCATE_PC = { top: 12, right: 10 };
-  const LOCATE_SP = { top: 8, right: 12 };
+  // ★2026-07-27：スマホは 8→10 に変更。検索バーの実際の高さが計算値より
+  //   わずかに大きく、topを同じにすると円のほうが上に浮いて見えたため。
+  //   ★それでもずれて見える場合は、この top ではなく LOCATE_SIZE を
+  //     大きくして高さを合わせるほうが、上端・下端とも揃ってきれいになる。
+  const LOCATE_SP = { top: 10, right: 12 };
 
   // ボタンの直径(px)。
   // ★住所検索バーの高さと同じ値にすること★
@@ -2523,18 +2527,17 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       >
         {/* 地図アプリで一般的な「現在地」の矢印。ベタ塗りは悪目立ちするため
             線画にしてある。
-            ★色を変えたいときは stroke の値を変える。
-              "#333333" … 濃いグレー（現在の設定）
-              "#1A73E8" … Googleマップに近い青
-              "#662510" … ブランドカラー
-            ★線の太さは strokeWidth で調整する。 */}
+            ★色は SearchBar.tsx の虫眼鏡アイコンと同じ "#888" に揃えてある。
+              片方を変えたら、もう片方も合わせること。
+            ★円に対して大きい／小さいと感じたら、width と height を変える
+              （ボタンの直径 LOCATE_SIZE=34px に対して現在16px）。 */}
         <svg
-          width="20"
-          height="20"
+          width="16"
+          height="16"
           viewBox="0 0 24 24"
           fill="none"
-          stroke="#333333"
-          strokeWidth="1.8"
+          stroke="#888"
+          strokeWidth="2"
           strokeLinejoin="round"
           strokeLinecap="round"
           style={{ display: "block" }}
