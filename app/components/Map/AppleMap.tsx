@@ -1351,16 +1351,27 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   //   実用上の損失は無いと判断した。
   //
   // ★位置を変えたいときは、下の LOCATE_PC / LOCATE_SP を変える。
-  //   PCは凡例（右上）と重ならないよう左上に置いている。
+  //   PC・スマホとも右上。住所検索バーと高さが揃うように top を
+  //   SearchBar.tsx の SEARCH_PC / SEARCH_SP の top と合わせてある。
+  //   ★片方を動かしたら、もう片方も合わせること。
   // ============================================================
-  const LOCATE_PC = { top: 12, left: 15 };
-  const LOCATE_SP = { top: 12, right: 12 };
+  const LOCATE_PC = { top: 12, right: 10 };
+  const LOCATE_SP = { top: 8, right: 12 };
 
-  // 飛んだ先の縮尺。約200m四方。小さくするほど寄る。
-  // ★寄せすぎない理由★ 屋内ではGPSに数十mの誤差が出る。限界まで
-  //   寄せると、ずれに気づかないまま隣の建物で投稿されてしまう。
-  //   少し引いた状態で止め、最後は本人に位置を合わせてもらう。
-  const LOCATE_SPAN = 0.002;
+  // ボタンの直径(px)。住所検索バーの高さ（約34px）に合わせてある。
+  // ★大きすぎる／小さすぎると感じたらこの数値を変える。
+  const LOCATE_SIZE = 36;
+
+  // 飛んだ先の縮尺。★数値を小さくするほど寄る★
+  //   0.002  … 約220m四方
+  //   0.0008 … 約90m四方（現在の設定）
+  //   0.0005 … 約55m四方
+  // ★これ以上寄せても、cameraZoomRange（PC 200m / スマホ 50m）が
+  //   上限として効くため、そこで頭打ちになる。
+  // ★寄せすぎの注意★ 屋内ではGPSに数十mの誤差が出る。ずれに気づかず
+  //   隣の建物で投稿されることがあるので、最後は本人に位置を
+  //   合わせてもらう前提で考えること。
+  const LOCATE_SPAN = 0.0008;
 
   const [locating, setLocating] = useState(false);
   const [locateError, setLocateError] = useState<string | null>(null);
@@ -2476,8 +2487,8 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
       {/* ============================================================
           📍 現在地ボタン（2026-07-27 追加）
-          PCは左上（凡例が右上にあるため）／スマホは右上。
-          位置は上の LOCATE_PC / LOCATE_SP で調整する。
+          PC・スマホとも右上。住所検索バーと高さを揃えてある。
+          位置は上の LOCATE_PC / LOCATE_SP、大きさは LOCATE_SIZE で調整する。
          ============================================================ */}
       <button
         type="button"
@@ -2488,9 +2499,9 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
           position: "absolute",
           ...(isMobile
             ? { top: LOCATE_SP.top, right: LOCATE_SP.right }
-            : { top: LOCATE_PC.top, left: LOCATE_PC.left }),
-          width: 40,
-          height: 40,
+            : { top: LOCATE_PC.top, right: LOCATE_PC.right }),
+          width: LOCATE_SIZE,
+          height: LOCATE_SIZE,
           borderRadius: "50%",
           background: "#ffffff",
           border: "none",
@@ -2504,9 +2515,10 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
           opacity: locating ? 0.6 : 1,
         }}
       >
-        {/* 地図アプリで一般的な「現在地」の記号（中心の点＋十字の目盛り） */}
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="#662510" style={{ display: "block" }}>
-          <path d="M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm8.94 3c-.46-4.17-3.77-7.48-7.94-7.94V1h-2v2.06C6.83 3.52 3.52 6.83 3.06 11H1v2h2.06c.46 4.17 3.77 7.48 7.94 7.94V23h2v-2.06c4.17-.46 7.48-3.77 7.94-7.94H23v-2h-2.06zM12 19c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z" />
+        {/* 地図アプリで一般的な「現在地」の矢印。色は標準に近い濃いグレー。
+            ★ブランドカラーにしたい場合は fill を "#662510" に変える。 */}
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="#333333" style={{ display: "block" }}>
+          <path d="M21 3L3 10.53v.98l6.84 2.65L12.48 21h.98L21 3z" />
         </svg>
       </button>
 
