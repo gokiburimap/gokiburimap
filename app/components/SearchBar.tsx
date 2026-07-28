@@ -4,20 +4,19 @@ import { useState } from "react";
 // ============================================================
 // 🔍【住所検索バーの位置・大きさはここ】(2026-07-27 整理)
 //
+// PCとスマホで別々に指定できるようにしてある。
 // 数値を書き換えるだけで、位置と幅が変わる。
 //
-// ・SEARCH_TOP_PX   … 地図の上端からの距離(px)。小さくすると上に寄る
-// ・SEARCH_WIDTH    … 画面幅に対する割合。小さくすると細くなる
-// ・SEARCH_MAX_PX   … 広い画面での上限幅(px)。PCでの見た目はこれで決まる
+// ・top      … 地図の上端からの距離(px)。小さくすると上に寄る
+// ・width    … 画面幅に対する割合。小さくすると細くなる
+// ・maxWidth … 広い画面での上限幅(px)。PCでの見た目はこれで決まる
 //
-// ★現在地ボタン（右上・MapKit標準）と高さを揃えたい場合★
-//   現在地ボタンの位置はMapKit側が決めているため、こちらの
-//   SEARCH_TOP_PX を動かして合わせるのが確実。
-//   ボタンの大きさは globals.css の .mk-user-location-control で調整する。
+// ★スマホは、右上の現在地ボタンと重ならない幅にしておくこと。
+//   画面幅390pxの端末で、66%＝約257px。左右に約66pxずつ余るので、
+//   40pxのボタンが右端に入っても当たらない。
 // ============================================================
-const SEARCH_TOP_PX = 8;
-const SEARCH_WIDTH = "66%";
-const SEARCH_MAX_PX = 320;
+const SEARCH_PC = { top: 12, width: "70%", maxWidth: 360 };
+const SEARCH_SP = { top: 8, width: "66%", maxWidth: 320 };
 
 interface SearchBarProps {
   onSearch: (lat: number, lng: number, boundingBox?: [string, string, string, string]) => void;
@@ -26,6 +25,12 @@ interface SearchBarProps {
 export default function SearchBar({ onSearch }: SearchBarProps) {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // 画面幅768px未満をスマホ扱い（AppleMap.tsx の isMobile と同じ基準）
+  const [isMobile] = useState(
+    () => typeof window !== "undefined" && window.innerWidth < 768
+  );
+  const layout = isMobile ? SEARCH_SP : SEARCH_PC;
 
   const handleSearch = async () => {
     if (!query) return;
@@ -43,6 +48,7 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
         alert("場所が見つかりませんでした");
       }
     } catch {
+      // ★元の実装では通信失敗時にloadingが戻らず、以後検索できなくなっていた
       alert("検索に失敗しました。時間をおいてもう一度お試しください。");
     }
 
@@ -53,20 +59,20 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
     <div
       style={{
         position: "absolute",
-        top: `${SEARCH_TOP_PX}px`,
+        top: `${layout.top}px`,
         left: "50%",
         transform: "translateX(-50%)",
         zIndex: 1000,
         display: "flex",
         alignItems: "center",
-        width: SEARCH_WIDTH,
-        maxWidth: `${SEARCH_MAX_PX}px`,
+        width: layout.width,
+        maxWidth: `${layout.maxWidth}px`,
         background: "white",
         borderRadius: "24px",
         padding: "8px 14px",
         boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
         gap: "8px",
-        // 検索中はうっすら薄くして、押しても反応しないことを伝える
+        // 検索中はうっすら薄くして、処理中であることを伝える
         opacity: loading ? 0.7 : 1,
       }}
     >

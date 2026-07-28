@@ -164,6 +164,10 @@ const HARD_MAX_CLOUD_PX = 700;
 // （青緑→黄→オレンジ→赤→紫）を採用している。
 // 閾値・色を変えたい場合は、この配列の値を書き換えるだけでよい。
 //
+// ★2026-07-26：使い方ガイドの凡例図（HeaderMenu.tsx の
+//   GUIDE_LEGEND_COLORS）にも同じ色・ラベルを書き写してある。
+//   ここを変更したら、必ずそちらも変更すること。
+//
 // ※ 色分けは霧モードのみに適用する。円(🪳アイコン)モードは
 //   ブランドカラー固定で色分けしない（①の方針）
 // ※ RGB値は "R, G, B" のカンマ区切り文字列にしてあるので、
@@ -864,6 +868,12 @@ async function performTapAction(
   // 現在は、タップした瞬間にまずピンを立て（体感ゼロ秒）、住所が届いたら
   // 後から差し込む。禁止エリア・海外だと判明した場合は、その時点で
   // ピンを取り下げて警告を出す。
+  //
+  // ★2026-07-27 注意★
+  // ここで onMapClick を2回呼ぶ（①ピンだけ ②住所つき）。
+  // 受け側の page.tsx は、②が来たときにピンの位置を動かさず住所だけを
+  // 差し込む作りになっている。page.tsx の handleMapClick を編集する
+  // ときは、この2回呼びを前提に考えること。
   // ============================================================
   onMapClickRef.current(lat, lng); // ①まずピンを立てる（住所は空のまま）
 
@@ -1201,8 +1211,8 @@ function renderMarkers(
         const shiftM = Math.max(0, radiusM + area.margin_m);
 
         // 建物の中心 → この投稿 の向き（＝外向き。角なら斜めになる）
-        let dLat = lat - area.center_lat;
-        let dLng = lng - area.center_lng;
+        const dLat = lat - area.center_lat;
+        const dLng = lng - area.center_lng;
         // 緯度経度の1度あたりの距離差を補正して、実際の方角に合わせる
         const latScale = 111320;
         const lngScale = 111320 * Math.cos((lat * Math.PI) / 180);
@@ -1323,6 +1333,81 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   const LEGEND_SP = { bottom: 36, left: 10, font: 13, swatch: 16, pad: "10px 14px", line: 1.8 };
   const [legendCollapsed, setLegendCollapsed] = useState(false);
 
+  // ============================================================
+  // 📍 現在地ボタン（2026-07-27 追加・独自実装）
+  //
+  // 【なぜMapKit標準のボタンを使わないか】
+  // 標準の現在地ボタン(showsUserLocationControl)は、青い点・精度円・
+  // 「現在地：〜」の吹き出しが一体で付いてくる。精度円はタップを
+  // 吸い取るため、その範囲では投稿位置を選べなくなる。しかも
+  // MapKitには「精度円だけ消す」手段が無い。
+  //
+  // そこで、ブラウザ標準の位置情報API(navigator.geolocation)で座標だけ
+  // 取り、地図を動かす。地図上には何も描かないので、タップを妨げる
+  // ものが一切増えない。
+  //
+  // 【副作用】青い点も出ないので、地図上で自分の位置は分からない。
+  //   ただし投稿時の縮尺では標準の青い点もほぼ見えていなかったため、
+  //   実用上の損失は無いと判断した。
+  //
+  // ★位置を変えたいときは、下の LOCATE_PC / LOCATE_SP を変える。
+  //   PCは凡例（右上）と重ならないよう左上に置いている。
+  // ============================================================
+  const LOCATE_PC = { top: 12, left: 15 };
+  const LOCATE_SP = { top: 12, right: 12 };
+
+  // 飛んだ先の縮尺。約200m四方。小さくするほど寄る。
+  // ★寄せすぎない理由★ 屋内ではGPSに数十mの誤差が出る。限界まで
+  //   寄せると、ずれに気づかないまま隣の建物で投稿されてしまう。
+  //   少し引いた状態で止め、最後は本人に位置を合わせてもらう。
+  const LOCATE_SPAN = 0.002;
+
+  const [locating, setLocating] = useState(false);
+  const [locateError, setLocateError] = useState<string | null>(null);
+
+  const handleLocate = () => {
+    if (locating) return;
+
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      setLocateError("この端末では現在地を取得できません");
+      return;
+    }
+
+    setLocating(true);
+    setLocateError(null);
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setLocating(false);
+        if (!mapRef.current) return;
+        const { latitude, longitude } = position.coords;
+        mapRef.current.setRegionAnimated(
+          new window.mapkit.CoordinateRegion(
+            new window.mapkit.Coordinate(latitude, longitude),
+            new window.mapkit.CoordinateSpan(LOCATE_SPAN, LOCATE_SPAN)
+          )
+        );
+      },
+      (err) => {
+        setLocating(false);
+        // 1 = 許可されなかった / 2 = 取得できなかった / 3 = 時間切れ
+        if (err.code === 1) {
+          setLocateError("位置情報の使用が許可されていません");
+        } else {
+          setLocateError("現在地を取得できませんでした");
+        }
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  };
+
+  // 現在地が取れなかったときの案内は、数秒で自動的に消す
+  useEffect(() => {
+    if (!locateError) return;
+    const timer = setTimeout(() => setLocateError(null), 4000);
+    return () => clearTimeout(timer);
+  }, [locateError]);
+
   const isSelectingRef = useRef(isSelecting);
   const onMapClickRef = useRef(onMapClick);
   const reportPosRef = useRef(reportPos);
@@ -1409,7 +1494,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     hideBtn.onclick = async () => {
       const next = !hidden;
       hideBtn.disabled = true;
-      hideBtn.textContent = next ? "処理中..." : "処理中...";
+      hideBtn.textContent = "処理中...";
       try {
         const res = await fetch("/api/admin/reports", {
           method: "PATCH",
@@ -1431,7 +1516,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         paintHideBtn();
         // 霧を最新化（非表示なら消える・再表示なら戻る）
         fetchReports();
-        // 管理ピンも描き直してピンの色（📍⇔🟣）を即反映する
+        // 管理ピンも描き直してピンの色（📍⇔🟡）を即反映する
         renderAdminPinsRef.current(map);
       } catch {
         hideBtn.disabled = false;
@@ -1627,6 +1712,14 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     //
     // 取得カラムを id, lat, lng, nearby_count に絞る方針は従来通り
     // （地図に不要な情報をブラウザに配らない＋転送量削減）。
+    //
+    // ★既知の限界（2026-07-27 追記）★
+    // この方式は「全件をブラウザに持つ」ことが前提。投稿が数十万件を
+    // 超えると転送量・メモリの両方で破綻する。そのときは、日本を
+    // 約120m四方のマス目に区切り、マスごとの集計値だけを画面の範囲分
+    // 配る方式（＝地図・取得・DBの作り直し）への移行が必要。
+    // なお nearby_count をDB側で事前計算する現在の設計は、その方式でも
+    // そのまま通用する（作り直すのは取得と描画だけ）。
     // ============================================================
     // hidden=true（管理者が「霧だけ非表示」にした投稿）は最初から取得しない。
     // ＝地図に描かれない。データ自体は残るので、いつでも復活できる。
@@ -1721,12 +1814,11 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         showsZoomControl: false,
         showsCompass: "hidden",
         isRotationEnabled: false,
-       // ★2026-07-27：現在地ボタンを復活（右上）。MapKit標準の部品なので、
-        //   見た目・アイコンが地図アプリの一般的なものと揃い、説明不要で伝わる。
-        //   凡例をPCも左下へ移したので、重なりは発生しない。
-        //   位置情報の許可ダイアログは、ボタンを押した瞬間にだけ出る。
-        showsUserLocationControl: true,
-        // 航空写真の切り替えは引き続き非表示
+        // ★2026-07-19 スマホ対応：右上の「位置情報」「航空写真」ボタンを非表示に
+        // ★2026-07-27：現在地は独自ボタン（上の handleLocate）で実装している。
+        //   標準ボタンを有効にすると、精度円・青い点・吹き出しが一体で付いてきて
+        //   投稿位置のタップを妨げるため、ここは false のままにすること。
+        showsUserLocationControl: false,
         showsMapTypeControl: false,
       });
 
@@ -1776,23 +1868,6 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       requestRenderRef.current = doRender;
 
       // ============================================================
-      // 🖐 描き直しのデバウンス（2026-07-22・固まりバグの根治）
-      //
-      // 【確定した原因】切り分けテストで、doRender（全マーカーを消して
-      // 全部作り直して登録し直す処理）を止めると1本指ズーム/固まりが完全に
-      // 消え、doRenderを走らせると再発することを実機で確認。＝原因は
-      // 「region-change-endのたびの全マーカー作り直し」。連続ピンチ中に
-      // これが高速で繰り返され、iPhoneのMapKitのジェスチャー処理を壊していた。
-      //
-      // 【根治】ピンチ・パンの連続操作中は作り直さない。操作が途切れて
-      // 一定時間(SETTLE_MS)静止してから、1回だけ作り直す。region-change-end
-      // は連続操作中に何度も飛ぶが、そのたびにタイマーを張り直すので、
-      // 実際の再生成は「手が完全に止まった後の1回」だけになる。
-      //
-      // 【副作用】操作中は霧が古いサイズのまま追従し、止めた瞬間に正しい
-      // サイズ・クラスタに再計算される。これは意図した動作。
-      // ============================================================
-      // ============================================================
       // 🖐 描き直しのデバウンス（2026-07-22・固まりバグの根治・確定版）
       //
       // 【確定した真因】切り分けの結果、固まり/1本指ズームの原因は
@@ -1808,6 +1883,9 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       // 反応が鈍い。0.5秒は収束(約0.3〜0.5s)後で、体感も許容範囲。
       // 連続操作中はregion-change-endのたびにタイマーを張り直すので、
       // 作り直しは「手が完全に止まって収束も終わった後の1回」だけになる。
+      //
+      // 【副作用】操作中は霧が古いサイズのまま追従し、止めた瞬間に正しい
+      // サイズ・クラスタに再計算される。これは意図した動作。
       // ============================================================
       const SETTLE_MS = 500;
       let settleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1961,63 +2039,8 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         }, SETTLE_MS);
       });
       // 次の操作が始まったら、予約中の作り直しは取り消す（操作中は作らない）
-
       map.addEventListener("region-change-start", () => {
         if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
-      });
-
-      // ============================================================
-      // 📍 現在地ボタンを押したときの縮尺（2026-07-27 追加）
-      //
-      // MapKit標準の現在地ボタンは、飛んだ先の縮尺を指定できない。
-      // そこで、現在地が届いた時点で建物が見える程度まで寄せ直す。
-      //
-      // ★寄せすぎない理由★
-      // 屋内ではGPSに数十mの誤差が出る。限界まで寄せると、ずれている
-      // ことに気づかないまま隣の建物で投稿されてしまう。少し引いた
-      // 状態で止め、最後は本人に位置を合わせてもらう。
-      //
-      // ★すでに十分寄っているときは何もしない★
-      // 現在地は数秒おきに更新される。毎回寄せ直すと、利用者が自分で
-      // ズームや移動をしても引き戻されてしまうため。
-      // ============================================================
-      const USER_LOCATION_SPAN = 0.002; // 約200m四方。数値を小さくすると寄る
-
-      map.addEventListener("user-location-change", (event: any) => {
-        // ------------------------------------------------------------
-        // ★2026-07-27：現在地マーカーをタップに反応させない
-        //
-        // 現在地の青い点・精度円は、MapKitが独自に立てるマーカー。
-        // 既定ではタップすると「現在地：〜」の吹き出しが開いてしまい、
-        // 投稿位置を選ぶときに、その範囲だけ地図をタップできなくなる。
-        // 触覚を落として、下の地図にタップを素通しさせる。
-        //
-        // ★現在地は数秒おきに更新されるため、この処理も毎回走る。
-        //   MapKit側がマーカーを作り直しても、すぐ無効化し直される。
-        // ------------------------------------------------------------
-        try {
-          const ula = map.userLocationAnnotation;
-          if (ula) {
-            ula.calloutEnabled = false;
-            ula.enabled = false;
-            ula.selected = false;
-          }
-        } catch {
-          /* 取得できない環境では何もしない */
-        }
-
-        try {
-          if (map.region.span.latitudeDelta <= USER_LOCATION_SPAN * 1.5) return;
-          const c = event.coordinate;
-          map.setRegionAnimated(
-            new window.mapkit.CoordinateRegion(
-              new window.mapkit.Coordinate(c.latitude, c.longitude),
-              new window.mapkit.CoordinateSpan(USER_LOCATION_SPAN, USER_LOCATION_SPAN)
-            )
-          );
-        } catch {
-          /* 座標が取れなかった場合は、MapKit標準の動きに任せる */
-        }
       });
 
       renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
@@ -2451,6 +2474,66 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <SearchBar onSearch={handleSearch} />
 
+      {/* ============================================================
+          📍 現在地ボタン（2026-07-27 追加）
+          PCは左上（凡例が右上にあるため）／スマホは右上。
+          位置は上の LOCATE_PC / LOCATE_SP で調整する。
+         ============================================================ */}
+      <button
+        type="button"
+        onClick={handleLocate}
+        aria-label="現在地を表示"
+        title="現在地を表示"
+        style={{
+          position: "absolute",
+          ...(isMobile
+            ? { top: LOCATE_SP.top, right: LOCATE_SP.right }
+            : { top: LOCATE_PC.top, left: LOCATE_PC.left }),
+          width: 40,
+          height: 40,
+          borderRadius: "50%",
+          background: "#ffffff",
+          border: "none",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          padding: 0,
+          zIndex: 1000,
+          opacity: locating ? 0.6 : 1,
+        }}
+      >
+        {/* 地図アプリで一般的な「現在地」の記号（中心の点＋十字の目盛り） */}
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="#662510" style={{ display: "block" }}>
+          <path d="M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm8.94 3c-.46-4.17-3.77-7.48-7.94-7.94V1h-2v2.06C6.83 3.52 3.52 6.83 3.06 11H1v2h2.06c.46 4.17 3.77 7.48 7.94 7.94V23h2v-2.06c4.17-.46 7.48-3.77 7.94-7.94H23v-2h-2.06zM12 19c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z" />
+        </svg>
+      </button>
+
+      {/* 現在地が取得できなかったときの案内（4秒で自動的に消える） */}
+      {locateError && (
+        <div
+          style={{
+            position: "absolute",
+            top: 60,
+            left: "50%",
+            transform: "translateX(-50%)",
+            background: "rgba(255,255,255,0.95)",
+            color: "#292524",
+            padding: "10px 20px",
+            borderRadius: 24,
+            fontSize: 13,
+            fontWeight: 600,
+            boxShadow: "0 2px 10px rgba(0,0,0,0.15)",
+            zIndex: 1000,
+            pointerEvents: "none",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {locateError}
+        </div>
+      )}
+
       {/*
         🎨 目撃件数の凡例（PC=右上・従来サイズ／スマホ=左下・やや小さめ）
         位置・サイズの微調整は、コンポーネント上部の LEGEND_PC / LEGEND_SP で行う。
@@ -2461,7 +2544,6 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
           ...(isMobile
             ? { bottom: LEGEND_SP.bottom, left: LEGEND_SP.left }
             : { top: LEGEND_PC.top, right: LEGEND_PC.right }),
-         
           background: "white",
           borderRadius: 8,
           padding: isMobile ? LEGEND_SP.pad : LEGEND_PC.pad,
