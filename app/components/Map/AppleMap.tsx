@@ -1500,6 +1500,36 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   const onJustPostedDeletedRef = useRef(onJustPostedDeleted);
 
   // ============================================================
+  // 🔒 ズームを止める条件（2026-07-29 1か所に集約）
+  //
+  // 【なぜ集約するか】
+  // ズームを止めたい場面が3つに増えた結果、それぞれの処理が別々に
+  // isZoomEnabled を書き換えていた。片方が止めた直後にもう片方が
+  // 戻す、という取り合いが起きやすく、実際に一度起きている。
+  // 「止める条件」をこの関数だけが判断し、他は全部ここを呼ぶ形にする。
+  //
+  // 【止める場面】
+  //   ・投稿する場所を選んでいる間（Gボタンを押した後〜タップするまで）
+  //     …「ズームインしてください」と案内した縮尺のまま選ばせるため。
+  //       やり直したい人は、適当にタップしてキャンセルすればよい。
+  //   ・位置調整ピンが出ている間
+  //   ・投稿直後の確認画面が出ている間
+  //     …タッチに反応する物体の上でピンチすると地図が固まるため。
+  //
+  // 【止めないもの】
+  //   横移動(パン)は最後まで自由。止める理由が無く、止めると不便なだけ。
+  // ============================================================
+  const applyZoomLock = () => {
+    const map = mapRef.current;
+    if (!map) return;
+    const locked =
+      isSelectingRef.current ||
+      !!reportPosRef.current ||
+      justPostedActiveRef.current;
+    map.isZoomEnabled = !locked;
+  };
+
+  // ============================================================
   // 🔑 管理者モード：投稿ピンの表示と削除（2026-07-19 追加）
   //
   // 「霧の中のどの投稿を消せばいいか分からない」問題への回答。
@@ -1761,10 +1791,12 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     if (mapContainerRef.current) {
       mapContainerRef.current.style.cursor = isSelecting ? "crosshair" : "";
     }
+    applyZoomLock(); // ★2026-07-29：場所を選んでいる間はズームを止める
   }, [isSelecting, onMapClick]);
 
   useEffect(() => {
     reportPosRef.current = reportPos;
+    applyZoomLock();
   }, [reportPos]);
 
   useEffect(() => {
@@ -2302,14 +2334,11 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     justPostedActiveRef.current = !!justPosted;
 
     if (!justPosted) {
-      // 確認ピンが消えたのでズームを戻す。
-      // ただし位置選択中(reportPos)なら、そちらのロックを優先して維持する。
-      currentMap.isZoomEnabled = !reportPosRef.current;
+      applyZoomLock(); // 確認画面が消えたので、他に止める理由が無ければ戻る
       return;
     }
 
-    // ①ズーム禁止。ピンチが発生しないので、固まりの起点が消える。
-    currentMap.isZoomEnabled = false;
+    applyZoomLock(); // ①ズーム禁止。ピンチが発生しないので、固まりの起点が消える。
 
     const coordinate = new window.mapkit.Coordinate(justPosted.lat, justPosted.lng);
 
@@ -2408,7 +2437,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     }
 
     if (reportPos) {
-      currentMap.isZoomEnabled = false;
+      applyZoomLock();
       const coordinate = new window.mapkit.Coordinate(reportPos.lat, reportPos.lng);
 
       const annotation = new window.mapkit.Annotation(
@@ -2597,10 +2626,9 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       currentMap.selectedAnnotation = annotation;
       reportMarkerRef.current = annotation;
     } else {
-      // ★2026-07-29：ここで無条件にズームを戻すと、投稿直後（確認ピンが
-      //   出ている＝reportPosがnullになった直後）にロックが打ち消される。
-      //   確認ピンが出ている間は、ロックしたままにする。
-      currentMap.isZoomEnabled = !justPostedActiveRef.current;
+      // ★2026-07-29：止める条件の判断は applyZoomLock に一本化した。
+      //   ここで個別に条件を書くと、また取り合いが起きる。
+      applyZoomLock();
     }
   }, [reportPos]);
 

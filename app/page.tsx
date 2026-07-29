@@ -432,7 +432,7 @@ export default function Home() {
   </div>
 )}
 
-        {step === "idle" && (
+       {step === "idle" && !justPosted && (
          <>
   <style>{`
     @keyframes pulse-ring {
