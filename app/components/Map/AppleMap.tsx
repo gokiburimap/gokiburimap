@@ -1343,6 +1343,370 @@ function renderMarkers(
   markersRef.current = next;
 }
 
+// ============================================================
+// ============================================================
+// 🧱 ここから下は【新方式（タイル集計）】専用。2026-07-29 段階4
+//
+// 【旧方式との関係】
+// 上の renderMarkers（旧方式）には一切手を触れていない。
+// 新方式は ?mode=tile を付けたときだけ動く完全な別系統で、
+// 一般の訪問者は今まで通り旧方式のまま。ここが壊れても
+// サイトは何も影響を受けない。
+//
+// 【なぜ共通化しないのか】
+// 霧の大きさ計算や調整エリアの処理は旧方式とほぼ同じで、
+// まとめれば短く書ける。だが、まとめる作業は旧方式のコードを
+// 書き換えることに他ならない。新旧を並べて見比べる段階で
+// 旧方式に手を入れたら、比較の意味が無くなる。
+// ★新方式が正式採用になった時点で、旧方式ごと削除して
+//   この重複を解消すること。それまでは意図的に重複させる。
+//
+// 【前回2回の失敗を繰り返さないための要点】
+//  ① タイルを supercluster に食わせない。
+//     1マス＝1点なのでズームしても分岐せず、塊のまま固まる。
+//     サーバーが返したマスを、そのまま1個ずつ描く。
+//  ② ズームの穴を作らない。マスは z0〜z19 の全段階を作ってあり、
+//     下の calcTileZoom は必ずこの範囲に丸める。日本全体を
+//     表示しても0件にならない。
+// ============================================================
+
+// 1マスを画面上でおよそ何pxの大きさに見せるか。
+// 小さくすると、細かいマスを使う＝霧やアイコンの数が増える。
+// 大きくすると、粗いマスを使う＝数が減ってまとまる。
+// ★新旧を見比べて「粒が細かすぎる/粗すぎる」と感じたらここを変える★
+const TILE_TARGET_PX = 100;
+
+// 集計表に用意してある最も細かい段階。SQL側（段階2）と必ず揃えること。
+const TILE_MAX_Z = 19;
+
+// 画面の外周には描かない割合。旧方式のINNER_VIEWPORT_RATIOと同じ値。
+const TILE_INNER_VIEWPORT_RATIO = 0.6;
+
+// ============================================================
+// 今の縮尺で、どの段階のマスを使うかを決める
+//
+// 【霧モードで必ずz19にする理由】★重要★
+// 色に使う color_cnt は「そのマスと周囲8枚（3×3）の合計」。
+// z19の3×3がちょうど約190m四方で、現行の nearby_count
+// （半径120m以内の件数）とほぼ同じ範囲になる。
+// もし霧モードでz16のマスを使うと、3×3が約1.5km四方になり、
+// 件数が桁違いに増えて画面全体が紫（81件以上）になってしまう。
+// 色を正しく出せるのはz19だけなので、霧モードは常にz19を使う。
+//
+// 【アイコンモード（浅いズーム）】
+// 色を使わない（ブランドカラー固定）ので、見やすさだけで決める。
+// 1マスが画面上で TILE_TARGET_PX 程度に見える段階を選ぶ。
+// ============================================================
+function calcTileZoom(
+  map: any,
+  containerEl: HTMLDivElement | null,
+  isCloudZoom: boolean
+): number {
+  if (isCloudZoom) return TILE_MAX_Z;
+  const span = map.region.span;
+  const containerWidth = containerEl?.clientWidth || SUPERCLUSTER_TILE_SIZE;
+  const raw =
+    Math.log2(360 / span.longitudeDelta) + Math.log2(containerWidth / TILE_TARGET_PX);
+  return Math.max(0, Math.min(TILE_MAX_Z, Math.round(raw)));
+}
+
+// ============================================================
+// 画面に映っている範囲のマスを、サーバーから取ってくる
+//
+// p_from は期間フィルター用（段階3で使う）。今は常にnull＝全期間。
+// 「その月以降だけ数える」という意味で、月の1日を渡す。
+// ============================================================
+type TileRow = {
+  x: number;
+  y: number;
+  cnt: number;
+  lat: number;
+  lng: number;
+  color_cnt: number;
+};
+
+async function fetchTiles(
+  map: any,
+  containerEl: HTMLDivElement | null,
+  tileZ: number,
+  fromMonth: string | null
+): Promise<{ rows: TileRow[] | null; error: string | null }> {
+  try {
+    const span = map.region.span;
+    const center = map.region.center;
+    const r = TILE_INNER_VIEWPORT_RATIO;
+
+    const { data, error } = await supabase.rpc("tiles_in_bounds", {
+      p_z: tileZ,
+      p_min_lat: center.latitude - (span.latitudeDelta * r) / 2,
+      p_min_lng: center.longitude - (span.longitudeDelta * r) / 2,
+      p_max_lat: center.latitude + (span.latitudeDelta * r) / 2,
+      p_max_lng: center.longitude + (span.longitudeDelta * r) / 2,
+      p_from: fromMonth,
+    });
+
+    if (error) return { rows: null, error: error.message ?? "取得に失敗しました" };
+    return { rows: (data ?? []) as TileRow[], error: null };
+  } catch (e: any) {
+    return { rows: null, error: e?.message ?? "通信に失敗しました" };
+  }
+}
+
+// ============================================================
+// 🔗 受け取ったマスを、画面上で近いもの同士まとめる（2026-07-29）
+//
+// 【なぜ必要か】
+// マスは格子なので、日本列島のような細長い範囲は格子の境目で
+// 分断される。ズームアウトしても1個にまとまらず、2〜4個に割れる。
+// superclusterは「距離が近いものをまとめる」ので1個になっていた。
+// その挙動を取り戻すための処理。
+//
+// 【なぜ軽いか】
+// まとめる対象は、3万件の投稿ではなく、サーバーが返した数十個の
+// マスだけ。総当たりで比べても一瞬で終わる。
+// ＝「重いからDB側で集計する」という方針とは矛盾しない。
+//
+// 【まとめ方】
+//  ・件数の多いマスを親にして、そこから半径 MERGE_RADIUS_PX 以内の
+//    マスを吸収する
+//  ・件数は合計、色は最大値（旧方式の reduce と同じ考え方＝安全側）
+//  ・位置は親のまま。親は「そのマスで最も古い投稿」の位置に固定
+//    されているので、新規投稿が増えても霧が動かない
+// ============================================================
+// ============================================================
+// まとめる距離（px）。★アイコンの数を調整したいときはここ★
+//
+// 【なぜ2つあるか】実測の結果、1つの値では両立できなかった。
+//   100pxだと … 市街地は適度(21個)だが、日本全体で4個に割れる
+//   300pxだと … 日本全体は1個になるが、市街地が6個まで減って粗い
+// 格子は境目で必ず分断されるので、日本列島のような細長い範囲を
+// 1個にまとめるには、どうしても広い距離が要る。そこで、
+// 日本全体が入るような広い表示のときだけ、まとめる距離を広げる。
+//
+//   MERGE_RADIUS_PX_WIDE   … 広域表示のとき（大きいほどまとまる）
+//   MERGE_RADIUS_PX_NEAR   … 寄った表示のとき（superclusterのradius:100と同値）
+//   WIDE_VIEW_LNG_DEG      … 経度でこの幅より広ければ「広域」と判定
+// ============================================================
+const MERGE_RADIUS_PX_WIDE = 300;
+const MERGE_RADIUS_PX_NEAR = 100;
+const WIDE_VIEW_LNG_DEG = 8;
+
+type MergedTile = { lat: number; lng: number; count: number; colorCount: number };
+
+function mergeTilesOnScreen(
+  map: any,
+  items: MergedTile[],
+  radiusPx: number
+): MergedTile[] {
+  if (items.length <= 1) return items;
+
+  // 各マスが画面上のどこに来るかを求める。失敗したらまとめずに返す。
+  const pts: { x: number; y: number }[] = [];
+  try {
+    for (const it of items) {
+      const p = map.convertCoordinateToPointOnPage(
+        new window.mapkit.Coordinate(it.lat, it.lng)
+      );
+      pts.push({ x: p.x, y: p.y });
+    }
+  } catch {
+    return items;
+  }
+
+  // 件数の多い順に親を決める（大きい塊が中心になるように）
+  const order = items.map((_, i) => i).sort((a, b) => items[b].count - items[a].count);
+  const used = new Array(items.length).fill(false);
+  const result: MergedTile[] = [];
+
+  for (const i of order) {
+    if (used[i]) continue;
+    used[i] = true;
+    let count = items[i].count;
+    let colorCount = items[i].colorCount;
+
+    for (const j of order) {
+      if (used[j]) continue;
+      const dx = pts[i].x - pts[j].x;
+      const dy = pts[i].y - pts[j].y;
+      if (Math.hypot(dx, dy) <= radiusPx) {
+        used[j] = true;
+        count += items[j].count;
+        colorCount = Math.max(colorCount, items[j].colorCount);
+      }
+    }
+    result.push({ lat: items[i].lat, lng: items[i].lng, count, colorCount });
+  }
+  return result;
+}
+
+// ============================================================
+// 取ってきたマスを、そのまま霧・🪳アイコンとして描く
+//
+// 差分更新（段階1）の仕組みはそのまま使う。名札が同じマーカーは
+// 地図に触らず使い回し、増減分だけを操作する。
+// ============================================================
+function renderTileMarkers(
+  map: any,
+  markersRef: { current: Map<string, any> },
+  containerEl: HTMLDivElement | null,
+  rows: TileRow[],
+  currentZoom: number,
+  tileZ: number
+): number {
+  const next = new Map<string, any>();
+  const toAdd: any[] = [];
+
+  // ============================================================
+  // 色に使う件数の決め方（★2026-07-29 修正★）
+  //
+  // color_cnt は「そのマスと周囲8枚（3×3）の合計」。
+  // z19の3×3は約190m四方で、現行の nearby_count（半径120m以内）と
+  // ほぼ同じ範囲になる。だからz19のときだけ正しい。
+  //
+  // 浅いズーム（例：z14＝1マス約2.4km）の3×3は約7km四方。
+  // この合計を色に使うと、実際は1件しかない場所が紫（81件以上）に
+  // 塗られ、ズームすると色が変わる・消えるという不具合になる。
+  // （旧方式で色をDB側の固定値にした狙いを、私が台無しにしていた）
+  //
+  // 浅いズームでは自分のマスの件数をそのまま使う。1件だけのマスは
+  // 「そのマス全体で1件」という意味なので、半径120m以内も必ず1件。
+  // これは近似ではなく正しい値になる。
+  // ============================================================
+  const rawItems: MergedTile[] = [];
+  for (const row of rows) {
+    const lat = Number(row.lat);
+    const lng = Number(row.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+    const count = Math.max(1, Number(row.cnt) || 1);
+    const colorCount =
+      tileZ === TILE_MAX_Z
+        ? Math.max(1, Number(row.color_cnt ?? count) || 1)
+        : count;
+    rawItems.push({ lat, lng, count, colorCount });
+  }
+
+  // 表示の広さで、まとめる距離を切り替える（上の定数のコメントを参照）
+  const radiusPx =
+    map.region.span.longitudeDelta >= WIDE_VIEW_LNG_DEG
+      ? MERGE_RADIUS_PX_WIDE
+      : MERGE_RADIUS_PX_NEAR;
+  const items = mergeTilesOnScreen(map, rawItems, radiusPx);
+
+  for (const item of items) {
+    const { lat, lng, count, colorCount } = item;
+
+    // 旧方式と同じ規則：1件だけのマスは、縮尺に関係なく必ず霧にする
+    const isCloudZoom = count === 1 || currentZoom >= CLOUD_ZOOM_THRESHOLD;
+
+    // 霧の形とずらし量は座標から決める（旧方式と同じ計算）。
+    // ★新方式では代表点が「そのマスで最も古い投稿」に固定されているので、
+    //   近くに新規投稿があっても代表点は動かない。
+    //   ＝旧方式にあった「投稿すると近くの霧が動く」現象が起きない。
+    const seed = Math.abs(Math.round(lat * 1e6) * 1000003 + Math.round(lng * 1e6));
+    const { deltaLat, deltaLng } = calcOffsetLatLng(seed, lat);
+    let offsetLat = lat + deltaLat;
+    let offsetLng = lng + deltaLng;
+
+    const baseSize = calcCircleSize(count);
+    const minCoverageSize = calcMinCoverageSizePx(map, containerEl);
+    const CLOUD_PADDING_RATIO = 1.8;
+
+    let displaySize: number;
+    let icon: string;
+
+    if (isCloudZoom) {
+      const naturalDisplaySize = Math.round(baseSize * CLOUD_PADDING_RATIO);
+      const floorSize = Math.max(naturalDisplaySize, minCoverageSize);
+      const growth = calcCloudGrowthPx(count);
+      displaySize = Math.max(
+        floorSize,
+        Math.min(floorSize + growth, MAX_CLOUD_DISPLAY_SIZE_PX)
+      );
+      displaySize = Math.min(displaySize, HARD_MAX_CLOUD_PX);
+
+      // 🌫️ 霧調整エリア（削除依頼のあった建物に霧をかけない仕組み）。
+      //    旧方式と同じ処理。ここも将来まとめること。
+      const area = findFogAdjustArea(lat, lng);
+      if (area) {
+        displaySize = Math.max(8, Math.round(displaySize * area.size_scale));
+        const metersPerPx = calcMetersPerPixel(map, containerEl);
+        const visibleRadiusPx = displaySize / 2 / CLOUD_PADDING_RATIO;
+        const radiusM = visibleRadiusPx * metersPerPx;
+        const shiftM = Math.max(0, radiusM + area.margin_m);
+        const dLat = lat - area.center_lat;
+        const dLng = lng - area.center_lng;
+        const latScale = 111320;
+        const lngScale = 111320 * Math.cos((lat * Math.PI) / 180);
+        const vx = dLng * lngScale;
+        const vy = dLat * latScale;
+        const len = Math.hypot(vx, vy);
+        if (len > 0.001) {
+          offsetLat += ((vy / len) * shiftM) / latScale;
+          offsetLng += ((vx / len) * shiftM) / lngScale;
+        }
+      }
+
+      const coreSize = Math.round(displaySize / CLOUD_PADDING_RATIO);
+      icon = getCachedCloudIconUrl(count, colorCount, coreSize, seed);
+    } else {
+      displaySize = Math.min(Math.max(baseSize, minCoverageSize), MAX_CIRCLE_DISPLAY_SIZE_PX);
+      icon = getCachedClusterIconUrl(count, displaySize);
+    }
+
+    // 名札（差分更新の照合用）。旧方式と同じ作り方。
+    let key =
+      `t${tileZ}_${Math.round(offsetLat * 1e6)}_${Math.round(offsetLng * 1e6)}_` +
+      `${isCloudZoom ? "f" : "c"}_${count}_${colorCount}_${displaySize}`;
+    while (next.has(key)) key += "*";
+
+    const existing = markersRef.current.get(key);
+    if (existing) {
+      markersRef.current.delete(key);
+      next.set(key, existing);
+      continue;
+    }
+
+    const coordinate = new window.mapkit.Coordinate(offsetLat, offsetLng);
+    const annotation = new window.mapkit.ImageAnnotation(coordinate, {
+      url: { 1: icon },
+      size: { width: displaySize, height: displaySize },
+      anchorOffset: new DOMPoint(0, -displaySize / 2),
+    });
+
+    // 霧はタップ素通し、🪳アイコンはタップで拡大
+    const tappable = !isCloudZoom;
+    annotation.enabled = tappable;
+    (annotation as any).__baseEnabled = tappable;
+
+    if (tappable) {
+      annotation.addEventListener("select", () => {
+        try {
+          // 旧方式はクラスタが分裂する縮尺へ飛んでいたが、新方式に
+          // 「分裂する縮尺」という概念は無い。今のマス2枚ぶんの幅まで
+          // 寄る＝1段階ズームインする、という素直な動きにしてある。
+          // ★寄り方を変えたいときは、この 2 を小さくする（強く寄る）★
+          const newSpanDeg = (360 / Math.pow(2, tileZ)) * 2;
+          map.setRegionAnimated(
+            new window.mapkit.CoordinateRegion(
+              new window.mapkit.Coordinate(offsetLat, offsetLng),
+              new window.mapkit.CoordinateSpan(newSpanDeg, newSpanDeg)
+            )
+          );
+        } catch { /* noop */ }
+        try { annotation.selected = false; } catch { /* noop */ }
+      });
+    }
+
+    next.set(key, annotation);
+    toAdd.push(annotation);
+  }
+
+  const stale = Array.from(markersRef.current.values());
+  if (stale.length > 0) map.removeAnnotations(stale);
+  if (toAdd.length > 0) map.addAnnotations(toAdd);
+  markersRef.current = next;
+  return next.size; // バッジに出す「実際に描いた数」
+}
 const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   {
     onMapClick,
@@ -1373,6 +1737,32 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   // 描き直しの入口（reports変更時などはこの参照を通して描き直す）
   const requestRenderRef = useRef<() => void>(() => {});
   const [reports, setReports] = useState<Report[]>([]);
+
+  // ============================================================
+  // 🧱 新方式（タイル集計）の切り替え（2026-07-29 段階4）
+  //
+  // URLに ?mode=tile を付けたときだけ新方式で描画する。
+  // 付けていない一般の訪問者は、今まで通り旧方式（全件取得＋
+  // supercluster）のまま。新方式が壊れても訪問者には何も起きない。
+  //
+  // 【使い方】
+  //   通常   … https://（サイト）/
+  //   新方式 … https://（サイト）/?mode=tile
+  //   管理者ピンも同時に見たい場合 … /?mode=tile&admin
+  //
+  // 【この値は起動時に1回だけ決まる】
+  // 途中で切り替わらないので、地図の初期化処理の中で安心して使える。
+  // ============================================================
+  const [tileMode] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return new URLSearchParams(window.location.search).get("mode") === "tile";
+    } catch {
+      return false;
+    }
+  });
+  // 新方式の状態表示（右下のバッジに出す）。取得に失敗したら理由を出す。
+  const [tileStatus, setTileStatus] = useState<string>("");
 
   // ============================================================
   // 📱 スマホ判定（2026-07-19 追加）
@@ -1844,6 +2234,12 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   }));
 
   const fetchReports = async () => {
+    // ★2026-07-29：新方式では全件取得そのものを行わない。
+    //   マスの集計だけを画面の範囲ぶん取るので、この処理は不要。
+    //   ここを止めることで「全件ダウンロードが無くなった効果」が
+    //   そのまま体感できる（新旧を切り替えて初回表示を比べること）。
+    if (tileMode) return;
+
     const PAGE_SIZE = 1000;
 
     // ============================================================
@@ -1908,6 +2304,15 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   };
 
   useEffect(() => {
+    // ★2026-07-29：新方式は全件取得をしないので、投稿・削除のあとは
+    //   マスを取り直して描き直す。ここを入れないと、投稿しても
+    //   霧がすぐ出ない（＝この案件で最も守るべき挙動が壊れる）。
+    //   集計はDB側のトリガーが投稿と同時に更新済みなので、
+    //   取り直せば必ず新しい霧が含まれている。
+    if (tileMode) {
+      requestRenderRef.current();
+      return;
+    }
     fetchReports();
   }, [refreshTrigger]);
 
@@ -2029,7 +2434,62 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       );
 
 
+      // ============================================================
+      // 🧱 新方式（タイル集計）の描き直し（2026-07-29 段階4）
+      //
+      // 【旧方式との違い】
+      // 旧方式はブラウザに全件を持っているので即座に描けるが、
+      // 新方式はサーバーへ問い合わせるので「待ち」が入る。
+      //
+      // 【古い返事で新しい表示を壊さないための番号札】
+      // 素早くパンすると、問い合わせが複数同時に飛ぶ。通信は追い越しが
+      // 起きるので、古い問い合わせの返事があとから届くことがある。
+      // それをそのまま描くと、今見ている場所と違うマスが描かれる。
+      // 要求ごとに番号を振り、最新の番号でなければ黙って捨てる。
+      //
+      // 【固まりバグとの関係】
+      // 描き直しは今まで通り「指が止まって0.5秒後」にしか呼ばれない。
+      // 通信の待ちがそこへさらに乗るので、地図の収束中に割り込む余地は
+      // 旧方式より小さい。悪化する経路は無い（と考えているが、実機で
+      // ピンチ連打の確認は必要）。
+      // ============================================================
+      let tileSeq = 0;
+      const doRenderTiles = async () => {
+        const seq = ++tileSeq;
+        const currentZoom = calcSuperclusterZoom(map, mapContainerRef.current);
+        const isCloudZoom = currentZoom >= CLOUD_ZOOM_THRESHOLD;
+        const tileZ = calcTileZoom(map, mapContainerRef.current, isCloudZoom);
+
+        // 期間フィルターは段階3で実装する。今は常に全期間（null）。
+        const { rows, error } = await fetchTiles(map, mapContainerRef.current, tileZ, null);
+
+        if (seq !== tileSeq) return; // 追い越された古い返事なので捨てる
+        if (cancelled || !mapRef.current) return;
+
+        if (error || !rows) {
+          setTileStatus(`取得失敗: ${error ?? "不明"}`);
+          return;
+        }
+        const drawn = renderTileMarkers(
+          map, markersRef, mapContainerRef.current, rows, currentZoom, tileZ
+        );
+        applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
+        // 「サーバーから来たマス数 → 画面にまとめた後の数」を出す。
+        // 数が減っていれば、近いもの同士のまとめが効いている。
+        setTileStatus(`z${tileZ} / ${rows.length}マス→${drawn}個`);
+      };
+
       const doRender = () => {
+        // ★新方式はここで完全に枝分かれする。以降は旧方式の処理を通らない。
+        if (tileMode) {
+          void doRenderTiles();
+          renderAdminPinsRef.current(map);
+          loadFogAdjustAreas(map).then((updated) => {
+            if (updated) void doRenderTiles();
+          });
+          return;
+        }
+
         renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
         applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
         renderAdminPinsRef.current(map); // 管理者モード時のみ実際に描画される
@@ -2223,9 +2683,15 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
       });
 
-      renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
-      applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
-      renderAdminPinsRef.current(map);
+      // 起動直後の1回目の描画。
+      // ★新方式もここを通す。忘れると、地図を動かすまで何も表示されない。
+      if (tileMode) {
+        doRender();
+      } else {
+        renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
+        applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
+        renderAdminPinsRef.current(map);
+      }
 
       // 🌫️ 起動直後にも調整エリアを1回読み込む（以後はdoRender内で範囲追従）
       loadFogAdjustAreas(map).then((updated) => {
@@ -2299,6 +2765,11 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   useEffect(() => {
     reportsRef.current = reports;
 
+    // ★2026-07-29：新方式ではsuperclusterを一切使わない。
+    //   ここを素通ししないと、空のクラスタ木で renderMarkers が走り、
+    //   新方式が描いたマーカーを全部消してしまう。
+    if (tileMode) return;
+
     // ============================================================
     // ★2026-07-18 PostGIS対応：map/reduce を追加
     //
@@ -2356,6 +2827,11 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     if (markersRef.current.size > 0) {
       mapRef.current.removeAnnotations(Array.from(markersRef.current.values()));
       markersRef.current = new Map();
+    }
+    // 新方式は描き直しの入口（doRender）を通す。旧方式は従来通り。
+    if (tileMode) {
+      requestRenderRef.current();
+      return;
     }
     renderMarkers(mapRef.current, markersRef, clusterIndexRef, mapContainerRef.current);
     applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
@@ -2883,6 +3359,40 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       </div>
 
       <div ref={mapContainerRef} style={{ width: "100%", height: "100%" }} />
+
+      {/* ============================================================
+          🧱 新方式（?mode=tile）で見ていることを示す表示。
+          どちらを見ているのか分からなくなるのを防ぐためのもの。
+          使うマスの段階と件数も出しているので、粒の粗さを調整する
+          （TILE_TARGET_PX）ときの手掛かりになる。
+          ★新方式が正式採用になったら、このバッジごと削除すること★
+         ============================================================ */}
+      {tileMode && (
+        <div
+          style={{
+            position: "absolute",
+            bottom: 8,
+            left: "50%",
+            transform: "translateX(-50%)",
+            background: tileStatus.startsWith("取得失敗")
+              ? "rgba(179, 38, 30, 0.92)"
+              : "rgba(102, 37, 16, 0.88)",
+            color: "#fff",
+            padding: "5px 12px",
+            borderRadius: 14,
+            fontSize: 11,
+            fontWeight: 600,
+            zIndex: 1000,
+            pointerEvents: "none",
+            whiteSpace: "nowrap",
+            maxWidth: "90%",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          新方式（タイル）{tileStatus ? ` ${tileStatus}` : " 読み込み中"}
+        </div>
+      )}
 
     </div>
   );
