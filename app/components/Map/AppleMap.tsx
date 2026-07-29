@@ -1657,14 +1657,28 @@ function renderTileMarkers(
   // 表示の広さで、まとめる距離を切り替える（上の定数のコメントを参照）
   let radiusPx: number;
   if (tileZ === TILE_MAX_Z) {
-    // 霧モード：霧が実際に色をつけている半径（＝約67m）を、
-    // その場の縮尺で画面上のpxに換算した値を使う。
-    // これを超えてまとめると、吸収された投稿が霧の外に出てしまう。
-    const metersPerPx = calcMetersPerPixel(map, containerEl);
-    const fogVisibleRadiusM =
-      (MIN_COVERAGE_RADIUS_METERS / TILE_CLOUD_PADDING_RATIO) *
-      FOG_MERGE_COVERAGE_RATIO;
-    radiusPx = metersPerPx > 0 ? fogVisibleRadiusM / metersPerPx : 0;
+    // ============================================================
+    // 霧モード：まとめてよい距離＝「霧が実際に色をつけている半径」
+    //
+    // ★2026-07-29 再修正★
+    // 前回は「120m ÷ 余白1.8 ＝ 約67m」と机上で計算していたが、
+    // 霧には HARD_MAX_CLOUD_PX(700px) という上限があり、最大ズームでは
+    // ここに当たって霧が想定より小さくなる。その状態でまとめる距離だけ
+    // 67mのままだと、また「吸収したのに色が届かない」が起きる。
+    //
+    // そこで、実際に描くときと同じ手順で「1件のマスの霧の大きさ」を
+    // 求め、その見た目の半径をそのまま使う。上限に当たった場合も
+    // 自動的に小さくなるので、覆えない距離まで吸収することがない。
+    // ============================================================
+    const minCoverageSize = calcMinCoverageSizePx(map, containerEl);
+    const natural1 = Math.round(calcCircleSize(1) * TILE_CLOUD_PADDING_RATIO);
+    const floor1 = Math.min(
+      Math.max(natural1, minCoverageSize),
+      HARD_MAX_CLOUD_PX
+    );
+    // 画像の余白を除いた、実際に色が見えている半径（px）
+    const visibleRadiusPx = floor1 / 2 / TILE_CLOUD_PADDING_RATIO;
+    radiusPx = visibleRadiusPx * FOG_MERGE_COVERAGE_RATIO;
   } else {
     radiusPx =
       map.region.span.longitudeDelta >= WIDE_VIEW_LNG_DEG
@@ -2576,6 +2590,22 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       // 操作が終われば必ず描き直しが予約される（region-change-end →
       // 0.5秒後）ので、捨てても表示が古いままにはならない。
       let mapMoving = false;
+      let mapMovingSince = 0;
+      // ★2026-07-29 追加：この状態が解除されないまま残る場合への保険。
+      //
+      // 【起きていたこと】起動時、地図が最初の場所へ移動する際に
+      // 「操作開始」は出るのに「操作終了」が出ないことがある。すると
+      // 「動いている」判定が永久に解除されず、描き直しが全部止まり、
+      // バッジが「読み込み中」のまま何も表示されない。画面を触ると
+      // 操作終了が出て、そこで初めて表示される——という症状になる。
+      //
+      // 【なぜ時間で打ち切ってよいか】通信の追い越し対策は、操作開始の
+      // たびに番号を進める仕組み（tileSeq）が本命で、こちらは二重の保険。
+      // 一定時間を超えたら「合図が来なかった」とみなして解除しても、
+      // 本命の守りは残る。
+      const MOVING_STALE_MS = 2500;
+      const isMapBusy = () =>
+        mapMoving && Date.now() - mapMovingSince < MOVING_STALE_MS;
       const doRenderTiles = async () => {
         const seq = ++tileSeq;
         const currentZoom = calcSuperclusterZoom(map, mapContainerRef.current);
@@ -2594,7 +2624,11 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         if (seq !== tileSeq) return; // 追い越された古い返事なので捨てる
         // ★通信中に地図が動き出していたら、ここで手を引く。
         //   動いている最中にマーカーを入れ替えると地図が固まる。
-        if (mapMoving) return;
+        if (isMapBusy()) {
+          // 何が起きているか分かるようにバッジへ出す（原因追跡用）
+          setTileStatus("地図の操作中…");
+          return;
+        }
         // ★通信中に確認画面が開いた場合も描かない（閉じた時点で描き直す）
         if (justPostedActiveRef.current) return;
         if (cancelled || !mapRef.current) return;
@@ -2824,6 +2858,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         // ★新方式：すでに飛んでいる通信の返事も、ここで無効にする。
         //   番号を進めると、古い返事は seq の照合で捨てられる。
         mapMoving = true;
+        mapMovingSince = Date.now();
         tileSeq++;
         if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
       });
