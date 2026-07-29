@@ -943,6 +943,9 @@ function buildJustPostedCallout(
   onDeleted?: () => void
 ) {
   const container = document.createElement("div");
+  // ★2026-07-29：この吹き出しの中は、地図のタッチ遮断から必ず除外する
+  //   ための目印（AppleMap側の guardMapInput が見ている）。
+  container.dataset.justposted = "1";
   container.style.cssText =
     "background:#FFFFFF;border-radius:12px;padding:14px 16px;box-shadow:0 4px 16px rgba(0,0,0,0.18);min-width:220px;max-width:280px;text-align:left;" +
     // ★2026-07-29：文字の選択・コピーを禁止する。
@@ -1399,8 +1402,15 @@ const TILE_MAX_Z = 19;
 //   まずアイコン側だけを0.8にする、など。霧側は数が増えやすいので
 //   最後に、しかも0.7程度から試すのが安全。
 // ============================================================
+// ★2026-07-29 その後の調整★
+// 「ズームアウトすると表示件数が変わる」のはアイコンモード側の話なので、
+// アイコン側だけを1.0にする。これで見えている範囲＝数えている範囲になり、
+// ズームアウトで数字が動かなくなる。
+// 霧側は0.6のまま。理由は、報告された不具合はどれも霧側では起きておらず、
+// 霧を広げても解決する問題が無いのに、固まる危険だけが増えるため。
+// （霧を広げるのは、投稿地点まで霧を伸ばす調整と一緒に、別途1つずつ試す）
 const TILE_VIEWPORT_RATIO_FOG = 0.6;  // 霧モード（深いズーム）
-const TILE_VIEWPORT_RATIO_ICON = 0.6; // 🪳アイコンモード（浅いズーム）
+const TILE_VIEWPORT_RATIO_ICON = 1.0; // 🪳アイコンモード（浅いズーム）
 
 // ============================================================
 // 今の縮尺で、どの段階のマスを使うかを決める
@@ -2359,38 +2369,54 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     let initialized = false;
 
     // ============================================================
-    // 🔗 投稿の流れの最中は、地図の中のリンクを押せなくする（2026-07-29）
+    // 🔗 投稿の流れの最中、地図へのタッチを制御する（2026-07-29）
     //
-    // 地図の左下にはAppleの法的表示（ロゴ・「Legal」）が出ており、
-    // 押すと別のページや画面が開く。場所を選んでいる最中や確認画面の
-    // 最中にこれが起きると、流れが中断される。
+    // 【① リンクを押せなくする】
+    // 地図の左下にはAppleの法的表示（ロゴ・「Legal」）があり、押すと
+    // 別の画面が開く。場所を選んでいる最中に流れが中断されるので止める。
+    // 表示はMapKitの利用条件で求められているので、見た目は変えない。
+    // クラス名ではなく「リンク(aタグ)なら止める」で判定しているのは、
+    // Apple側の更新で内部の名前が変わっても効き続けるようにするため。
     //
-    // 【消さずに「押せなく」する理由】
-    // この表示はMapKitの利用条件で掲出が求められているものなので、
-    // 見た目は一切変えない。押せなくするだけに留める。
+    // 【② 確認画面が開いている間は、地図に触らせない】
+    // 地図をタップするとMapKitが吹き出しの選択を外す。こちらは
+    // 閉じさせない方針なので即座に開き直すが、その一瞬で吹き出しが
+    // 閉じて開くため「ピカッと光る」ように見えていた。
+    // そもそも地図にタップを届けなければ、選択が外れず、光らない。
+    // 副作用として、確認画面が出ている間は横移動もできなくなる。
+    // ズームは既に止めてあるので、実質的に「閉じるまで地図は固定」になる。
     //
-    // 【クラス名で狙わない理由】
-    // MapKitが内部で付けている名前はApple側の更新で変わりうる。
-    // 「リンク(aタグ)なら止める」という判定にしておけば、名前が
-    // 変わっても効き続ける。自前の吹き出しのボタンはbuttonタグなので
-    // 巻き込まれない。
+    // 【安全策】ボタンと吹き出しの中身は必ず通す。ここを塞ぐと
+    // 「閉じる」が押せなくなり、利用者が詰む。目印(data-justposted)が
+    // 万一効かなくても、buttonタグなら通るよう二重にしてある。
     // ============================================================
-    const blockMapLinks = (e: Event) => {
-      if (
-        !isSelectingRef.current &&
-        !reportPosRef.current &&
-        !justPostedActiveRef.current
-      ) {
-        return; // 通常閲覧中は今まで通り押せる
-      }
+    const guardMapInput = (e: Event) => {
+      const inFlow =
+        isSelectingRef.current ||
+        !!reportPosRef.current ||
+        justPostedActiveRef.current;
+      if (!inFlow) return; // 通常閲覧中は一切邪魔しない
+
       const el = e.target as HTMLElement | null;
-      if (el && typeof el.closest === "function" && el.closest("a")) {
+      const closest = (sel: string) =>
+        el && typeof el.closest === "function" ? el.closest(sel) : null;
+
+      // 吹き出しの中身（ボタン等）は必ず通す
+      if (closest("button, [data-justposted]")) return;
+
+      if (closest("a")) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+
+      if (justPostedActiveRef.current) {
         e.preventDefault();
         e.stopPropagation();
       }
     };
-    containerEl.addEventListener("click", blockMapLinks, true);
-    containerEl.addEventListener("pointerdown", blockMapLinks, true);
+    containerEl.addEventListener("click", guardMapInput, true);
+    containerEl.addEventListener("pointerdown", guardMapInput, true);
 
     const setupMap = () => {
       if (initialized || !mapContainerRef.current) return;
@@ -2823,8 +2849,8 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
     return () => {
       cancelled = true;
-      containerEl.removeEventListener("click", blockMapLinks, true);
-      containerEl.removeEventListener("pointerdown", blockMapLinks, true);
+      containerEl.removeEventListener("click", guardMapInput, true);
+      containerEl.removeEventListener("pointerdown", guardMapInput, true);
       if (mapRef.current) {
         mapRef.current.destroy();
         mapRef.current = null;
