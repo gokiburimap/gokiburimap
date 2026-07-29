@@ -2606,7 +2606,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       const MOVING_STALE_MS = 2500;
       const isMapBusy = () =>
         mapMoving && Date.now() - mapMovingSince < MOVING_STALE_MS;
-      const doRenderTiles = async () => {
+      const doRenderTiles = async (force = false) => {
         const seq = ++tileSeq;
         const currentZoom = calcSuperclusterZoom(map, mapContainerRef.current);
         const isCloudZoom = currentZoom >= CLOUD_ZOOM_THRESHOLD;
@@ -2624,8 +2624,10 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         if (seq !== tileSeq) return; // 追い越された古い返事なので捨てる
         // ★通信中に地図が動き出していたら、ここで手を引く。
         //   動いている最中にマーカーを入れ替えると地図が固まる。
-        if (isMapBusy()) {
-          // 何が起きているか分かるようにバッジへ出す（原因追跡用）
+        //   ただし起動直後の1回目（force）は例外。まだ利用者は何も
+        //   触っていないので、割り込みで固まる相手がいない。むしろ
+        //   ここで止めると「合図が来ないまま何も表示されない」に陥る。
+        if (!force && isMapBusy()) {
           setTileStatus("地図の操作中…");
           return;
         }
@@ -2887,9 +2889,13 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         const ensureInitialTiles = (attempt: number) => {
           if (cancelled || !mapRef.current) return;
           if (markersRef.current.size > 0) return; // もう描けているので終了
-          doRender();
-          if (attempt < 4) {
-            setTimeout(() => ensureInitialTiles(attempt + 1), 700);
+          // ★force=true で呼ぶ。起動時は「操作終了」の合図が来ないまま
+          //   「動いている」判定が残ることがあり、通常の経路だと
+          //   何度試しても同じ判定で止められてしまうため。
+          void doRenderTiles(true);
+          renderAdminPinsRef.current(map);
+          if (attempt < 7) {
+            setTimeout(() => ensureInitialTiles(attempt + 1), 600);
           }
         };
         ensureInitialTiles(0);
