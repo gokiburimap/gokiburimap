@@ -259,6 +259,9 @@ export default function Home() {
           alignItems: "center",
           justifyContent: "space-between",
           gap: 10,
+          userSelect: "none",
+          WebkitUserSelect: "none",
+          WebkitTouchCallout: "none",
         }}
       >
         {/* ============================================================

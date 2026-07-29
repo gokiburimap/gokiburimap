@@ -1379,8 +1379,30 @@ const TILE_TARGET_PX = 100;
 // 集計表に用意してある最も細かい段階。SQL側（段階2）と必ず揃えること。
 const TILE_MAX_Z = 19;
 
-// 画面の外周には描かない割合。旧方式のINNER_VIEWPORT_RATIOと同じ値。
-const TILE_INNER_VIEWPORT_RATIO = 0.6;
+// ============================================================
+// 画面の中央何割ぶんを問い合わせるか。★ここで調整する★
+//
+// 【何のための値か】旧方式のINNER_VIEWPORT_RATIO(0.6固定)を引き継いだもの。
+// 元々の狙いは「地図の端で見切れたマーカーを出さない」ことだった
+// （旧方式のコメント参照。ズームによる出し分けは無く、常に0.6だった）。
+//
+// 【1.0にすると起きること】
+//  ・良い点：画面の端まで描かれる。表示件数が「見えている範囲の実数」
+//            と一致する（0.6だと、ズームアウトするほど枠に入る陸地が
+//            増えて数が変わる、という現象が起きる）
+//  ・悪い点：端のマーカーが少し見切れることがある
+//
+// 【霧を1.0にしてよい理由】霧はふちがぼけているので、端で切れても
+// 目立たない。実測でも3万件なら1画面あたり数個しか増えない。
+//
+// 【将来の注意】300万件規模になると、霧モードのマスは1画面100個超に
+// なりうる。そのとき1.0のままだと霧画像のキャッシュ上限(150)を
+// 超えて重くなる可能性がある。件数が増えたらここを下げるか、
+// MERGE_RADIUS_PX_FOG を50前後に戻して数を減らすこと。
+// ============================================================
+const TILE_VIEWPORT_RATIO_FOG = 1.0;  // 霧モード（深いズーム）
+const TILE_VIEWPORT_RATIO_ICON = 1.0; // 🪳アイコンモード（浅いズーム）
+                                      // 端の見切れが気になるなら0.9〜0.8へ
 
 // ============================================================
 // 今の縮尺で、どの段階のマスを使うかを決める
@@ -1429,12 +1451,13 @@ async function fetchTiles(
   map: any,
   containerEl: HTMLDivElement | null,
   tileZ: number,
-  fromMonth: string | null
+  fromMonth: string | null,
+  viewportRatio: number
 ): Promise<{ rows: TileRow[] | null; error: string | null }> {
   try {
     const span = map.region.span;
     const center = map.region.center;
-    const r = TILE_INNER_VIEWPORT_RATIO;
+    const r = viewportRatio;
 
     const { data, error } = await supabase.rpc("tiles_in_bounds", {
       p_z: tileZ,
@@ -1491,6 +1514,18 @@ const MERGE_RADIUS_PX_WIDE = 300;
 const MERGE_RADIUS_PX_NEAR = 100;
 const WIDE_VIEW_LNG_DEG = 8;
 
+// ★2026-07-29 追加：霧モード（z19）ではまとめない（0＝まとめない）。
+//
+// 【なぜ】まとめると、新しい投稿のマスが「件数の多い隣のマス」に
+// 吸収され、霧の中心が元の場所のまま動かない。結果、投稿した地点に
+// 霧が届かず「投稿しても霧ができない」ように見える。
+//
+// 【まとめなくても大丈夫な理由】霧は最低120mの半径を必ず持つのに対し、
+// z19のマスは東京付近で約62m。隣り合うマスの霧は必ず重なるので、
+// 格子状にバラバラには見えず、つながった霧として伸びる。
+// ★もし霧の数が多すぎて重いと感じたら、ここを50〜100に上げる★
+const MERGE_RADIUS_PX_FOG = 0;
+
 type MergedTile = { lat: number; lng: number; count: number; colorCount: number };
 
 function mergeTilesOnScreen(
@@ -1498,7 +1533,7 @@ function mergeTilesOnScreen(
   items: MergedTile[],
   radiusPx: number
 ): MergedTile[] {
-  if (items.length <= 1) return items;
+  if (items.length <= 1 || radiusPx <= 0) return items;
 
   // 各マスが画面上のどこに来るかを求める。失敗したらまとめずに返す。
   const pts: { x: number; y: number }[] = [];
@@ -1587,9 +1622,11 @@ function renderTileMarkers(
 
   // 表示の広さで、まとめる距離を切り替える（上の定数のコメントを参照）
   const radiusPx =
-    map.region.span.longitudeDelta >= WIDE_VIEW_LNG_DEG
-      ? MERGE_RADIUS_PX_WIDE
-      : MERGE_RADIUS_PX_NEAR;
+    tileZ === TILE_MAX_Z
+      ? MERGE_RADIUS_PX_FOG // 霧モードはまとめない
+      : map.region.span.longitudeDelta >= WIDE_VIEW_LNG_DEG
+        ? MERGE_RADIUS_PX_WIDE
+        : MERGE_RADIUS_PX_NEAR;
   const items = mergeTilesOnScreen(map, rawItems, radiusPx);
 
   for (const item of items) {
@@ -2476,7 +2513,13 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         const tileZ = calcTileZoom(map, mapContainerRef.current, isCloudZoom);
 
         // 期間フィルターは段階3で実装する。今は常に全期間（null）。
-        const { rows, error } = await fetchTiles(map, mapContainerRef.current, tileZ, null);
+        const { rows, error } = await fetchTiles(
+          map,
+          mapContainerRef.current,
+          tileZ,
+          null,
+          isCloudZoom ? TILE_VIEWPORT_RATIO_FOG : TILE_VIEWPORT_RATIO_ICON
+        );
 
         if (seq !== tileSeq) return; // 追い越された古い返事なので捨てる
         // ★通信中に地図が動き出していたら、ここで手を引く。
