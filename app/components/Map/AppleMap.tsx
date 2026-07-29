@@ -4,6 +4,7 @@ import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } f
 import Supercluster from "supercluster";
 import { supabase } from "../../lib/supabase";
 import SearchBar from "../SearchBar";
+import { fetchMapData } from "../../lib/mapData";
 
 // ============================================================
 // 📝 Report の型（2026-07-18 収集項目の見直しに伴い更新）
@@ -23,6 +24,7 @@ interface Report {
   lat: number;
   lng: number;
   nearby_count?: number; // ★2026-07-18 PostGIS：半径120m以内の投稿件数（DB側で事前計算）
+  weight?: number; // ★区画の集計を表す点のときだけ入る。その区画の投稿数
   address?: string;
   occurred_on?: string; // "2026-07-18" 形式
   detail?: string;
@@ -1091,8 +1093,15 @@ function renderMarkers(
   const finalAnnotations = clusters.map((c: any) => {
     const [lng, lat] = c.geometry.coordinates;
     const isCluster = !!c.properties.cluster;
-    const count = isCluster ? c.properties.point_count : 1;
-
+    // ★2026-07-29 タイル方式：件数の求め方
+    //   ・個別の投稿  … 従来どおり1件ずつ数える
+    //   ・区画の集計  … その区画の投稿数(weight)を使う
+    //   区画をまとめたクラスタは、weightの合計を持ち回っている（下の
+    //   Supercluster の map/reduce を参照）。
+    const count = isCluster
+      ? (c.properties.weight ?? c.properties.point_count)
+      : (c.properties.report?.weight ?? 1);
+    
     // ============================================================
     // ★2026-07-18 PostGIS対応：「数」の使い分け
     //
@@ -1311,6 +1320,10 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   const clusterIndexRef = useRef<Supercluster | null>(null);
   // 描き直しの入口（reports変更時などはこの参照を通して描き直す）
   const requestRenderRef = useRef<() => void>(() => {});
+  // 🗺 絞り込みの期間（将来のフィルター機能用。今は全期間固定）
+  const periodRef = useRef<"all" | "1y" | "3m">("all");
+  // 🖐 地図が動いている最中かどうか。動いている間は描き直さない（固まり防止）
+  const mapMovingRef = useRef(false);
   const [reports, setReports] = useState<Report[]>([]);
 
   // ============================================================
@@ -1719,68 +1732,34 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     },
   }));
 
+  // ============================================================
+  // 🗺 地図データの取得（2026-07-29 タイル方式に変更）
+  //
+  // 【変更の理由】
+  // 従来は全投稿をブラウザに配っていたため、数十万件を超えると
+  // 転送量とメモリで破綻する作りだった（メモ 10-3 の課題）。
+  // 現在は「画面に映っている範囲のぶんだけ」を取得する。
+  //   ・ズームが浅い … 区画ごとの集計（1区画＝1点。weightに件数）
+  //   ・ズームが深い … 画面内の個別の投稿
+  // 総件数が何百万件になっても、受け取る量は画面の広さで決まる。
+  //
+  // 【固まり不具合への配慮】
+  // ここでは取得だけを行い、描き直しは呼ばない。setReports によって
+  // 下の useEffect([reports]) が走るが、そこで「地図が動いている最中は
+  // 描き直さない」ガードを入れてある。ピンチの収束中にマーカーを
+  // 作り直すと地図が固まる不具合があったため。
+  // ============================================================
   const fetchReports = async () => {
-    const PAGE_SIZE = 1000;
+    const map = mapRef.current;
+    if (!map) return;
 
-    // ============================================================
-    // ★2026-07-19 高速化：ページを「順番に」ではなく「一斉に」取る
-    //
-    // 従来は1000件ずつ順番に取得していたため、3.5万件なら35回の通信が
-    // 数珠つなぎになり、全部届くまでゴキブリが表示されなかった
-    // （初回表示が遅い最大の原因）。
-    // 先に総件数だけ聞き、必要なページ数ぶんのリクエストを同時に投げる
-    // ことで、通信時間が「35往復分」から「ほぼ1往復分」になる。
-    //
-    // 取得カラムを id, lat, lng, nearby_count に絞る方針は従来通り
-    // （地図に不要な情報をブラウザに配らない＋転送量削減）。
-    //
-    // ★既知の限界（2026-07-27 追記）★
-    // この方式は「全件をブラウザに持つ」ことが前提。投稿が数十万件を
-    // 超えると転送量・メモリの両方で破綻する。そのときは、日本を
-    // 約120m四方のマス目に区切り、マスごとの集計値だけを画面の範囲分
-    // 配る方式（＝地図・取得・DBの作り直し）への移行が必要。
-    // なお nearby_count をDB側で事前計算する現在の設計は、その方式でも
-    // そのまま通用する（作り直すのは取得と描画だけ）。
-    // ============================================================
-    // hidden=true（管理者が「霧だけ非表示」にした投稿）は最初から取得しない。
-    // ＝地図に描かれない。データ自体は残るので、いつでも復活できる。
-    // 表示処理には一切触れないので、タッチ挙動に影響しない安全な方式。
-    const { count, error: countError } = await supabase
-      .from("reports")
-      .select("id", { count: "exact", head: true })
-      .not("hidden", "is", true);
+    const zoom = calcSuperclusterZoom(map, mapContainerRef.current);
+    const result = await fetchMapData(map, zoom, periodRef.current);
 
-    if (countError) {
-      console.error("reports件数取得エラー:", countError);
-      return;
-    }
-    const total = count ?? 0;
-    if (total === 0) {
-      setReports([]);
-      return;
-    }
+    // 通信に失敗したときは、前回の表示をそのまま残す（画面が空になるより良い）
+    if (!result) return;
 
-    const pageCount = Math.ceil(total / PAGE_SIZE);
-    const results = await Promise.all(
-      Array.from({ length: pageCount }, (_, i) =>
-        supabase
-          .from("reports")
-          .select("id, lat, lng, nearby_count")
-          .not("hidden", "is", true)
-          .order("id", { ascending: true })
-          .range(i * PAGE_SIZE, (i + 1) * PAGE_SIZE - 1)
-      )
-    );
-
-    const allReports: any[] = [];
-    results.forEach((r, i) => {
-      if (r.error) {
-        console.error(`reports取得エラー(ページ${i + 1}):`, r.error);
-      } else if (r.data) {
-        allReports.push(...r.data);
-      }
-    });
-    setReports(allReports);
+    setReports(result.points as Report[]);
   };
 
   useEffect(() => {
@@ -2052,15 +2031,18 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       drawAreaShapesNowRef.current = drawAreaShapes;
 
       map.addEventListener("region-change-end", () => {
+        mapMovingRef.current = false;                    // ★追加
         if (settleTimer) clearTimeout(settleTimer);
         settleTimer = setTimeout(() => {
           settleTimer = null;
+          fetchReports();                                 // ★追加：範囲が変わったので取り直す
           doRender();
-          drawAreaShapesRef.current(); // エリアの線も追従させる
+          drawAreaShapesRef.current();
         }, SETTLE_MS);
       });
       // 次の操作が始まったら、予約中の作り直しは取り消す（操作中は作らない）
       map.addEventListener("region-change-start", () => {
+        mapMovingRef.current = true;                      // ★追加
         if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
       });
 
@@ -2154,14 +2136,22 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     // 「ズームインで件数が減るのは自然、増えるのは不自然」という
     // 直感と一致する。
     // ============================================================
-    clusterIndexRef.current = new Supercluster({
+   clusterIndexRef.current = new Supercluster({
       radius: 100,
       maxZoom: MAX_CLUSTER_ZOOM,
-      map: (props: any) => ({ maxNearby: props.report?.nearby_count ?? 1 }),
+      // ★2026-07-29：weight（その点が表す投稿数）も持ち回る。
+      //   個別の投稿は1、区画の集計はその区画の件数。
+      //   クラスタにまとまったときは合計して、円の数字に使う。
+      map: (props: any) => ({
+        maxNearby: props.report?.nearby_count ?? 1,
+        weight: props.report?.weight ?? 1,
+      }),
       reduce: (accumulated: any, props: any) => {
         accumulated.maxNearby = Math.max(accumulated.maxNearby, props.maxNearby);
+        accumulated.weight = (accumulated.weight ?? 0) + (props.weight ?? 1);
       },
     });
+    
     clusterIndexRef.current.load(
       reports.map((r) => ({
         type: "Feature",
@@ -2171,9 +2161,14 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     );
 
     if (!mapRef.current) return;
-    // reports（投稿データ）が変わったら、クラスタ木を作り直して1回描画する。
-    // これはユーザー操作中ではないので即描画でよい（デバウンス対象は
-    // region-changeによる連続再描画のみ）。
+
+    // ★固まり不具合の防止（最重要）
+    // 地図が動いている最中（ピンチの収束を含む）にマーカーを作り直すと、
+    // MapKitのジェスチャー処理が壊れて地図が固まる不具合があった。
+    // データが届いたのが操作中だった場合はここでは描かず、操作が止まった
+    // ときの再描画（SETTLE_MS のタイマー）に任せる。
+    if (mapMovingRef.current) return;
+
     renderMarkers(mapRef.current, markersRef, clusterIndexRef, mapContainerRef.current);
     applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
   }, [reports]);
