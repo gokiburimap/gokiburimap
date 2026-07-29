@@ -123,7 +123,7 @@ const MAX_CLUSTER_FONT_SIZE_PX = 18;
 // ============================================================
 // 🔵【③円モードのサイズ上限はここ】
 // 数値を下げるほど、円が最大までズームしても大きくなりすぎなくなる
-// ★2026-07-17：🪳アイコン化に伴い、ズームイン時に大きくなりすぎるとの
+// ★2026-07-17:🪳アイコン化に伴い、ズームイン時に大きくなりすぎるとの
 // フィードバックを受けて140→100に下げた
 // ============================================================
 const MAX_CIRCLE_DISPLAY_SIZE_PX = 100;
@@ -910,7 +910,9 @@ async function performTapAction(
 // DOM要素の生成タイミングに依存しないため、レンダリング競合が起きない。
 // ============================================================
 function applyAnnotationInteractivity(
-  markersRef: { current: any[] },
+  // ★2026-07-29 差分更新化に伴い、配列→Map(名札→マーカー)に変更。
+  //   Mapのforeachも「値」が第1引数なので、下の処理本体は変更不要。
+  markersRef: { current: Map<string, any> },
   isSelectingRef: { current: boolean },
   reportPosRef: { current: { lat: number; lng: number } | null }
 ) {
@@ -1049,15 +1051,29 @@ function buildJustPostedCallout(
 // clusterIndexRef.current にはすでに構築済みのSuperclusterインスタンスが
 // 入っている前提で、bbox・zoomに応じた getClusters() の取り出しだけを行う。
 // 木構築は reports が変わった時の useEffect 側の責務。
+// ============================================================
+// 🔁 差分更新（2026-07-29 段階1）
+//
+// 【従来】毎回、全マーカーを削除 → 全マーカーを作り直し → 全部追加。
+//   パンで少し動かしただけでも、画面内の全部が消えて再生成されていた。
+//
+// 【現在】マーカーごとに「名札(キー)」を付けて前回分と照合し、
+//   ・前回と同じ名札のマーカー … 地図に一切触らず、そのまま使い回す
+//   ・前回あって今回無いもの   … その分だけ削除
+//   ・今回新しく必要なもの     … その分だけ追加
+//   にする。markersRef は配列ではなく Map(名札→マーカー) で持つ。
+//
+// 【効果の見込み】パン時は端の出入り分だけの操作になる（推定：大幅減）。
+//   ズーム時はサイズが変わるため名札も変わり、結果的に従来同様の
+//   全入れ替えになる（＝ズーム時の挙動は従来と同じ。悪化はしない）。
+// ============================================================
 function renderMarkers(
   map: any,
-  markersRef: { current: any[] },
+  markersRef: { current: Map<string, any> },
   clusterIndexRef: { current: Supercluster | null },
   containerEl: HTMLDivElement | null
 ) {
   if (!clusterIndexRef.current) return;
-
-  markersRef.current.forEach((m) => map.removeAnnotation(m));
 
   const span = map.region.span;
   const center = map.region.center;
@@ -1088,7 +1104,11 @@ function renderMarkers(
   const zoom = Math.min(currentZoom, MAX_CLUSTER_ZOOM);
   const clusters = clusterIndexRef.current.getClusters(bbox, zoom);
 
-  const finalAnnotations = clusters.map((c: any) => {
+  // 今回の描画で「あるべきマーカーの一覧」を名札付きで組み立てる
+  const next = new Map<string, any>();
+  const toAdd: any[] = [];
+
+  for (const c of clusters as any[]) {
     const [lng, lat] = c.geometry.coordinates;
     const isCluster = !!c.properties.cluster;
     const count = isCluster ? c.properties.point_count : 1;
@@ -1238,6 +1258,26 @@ function renderMarkers(
       icon = getCachedClusterIconUrl(count, displaySize);
     }
 
+    // ============================================================
+    // 🔖 このマーカーの名札(キー)。
+    // 位置・モード(霧/円)・件数・色・サイズが全部同じなら「同じマーカー」
+    // とみなして使い回す。どれか1つでも違えば別物として作り直す。
+    // ※霧の形はseedで決まり、seedは座標から決まるので、位置が同じなら
+    //   形も同じ。名札に形の情報を別途入れる必要はない。
+    // ============================================================
+    let key =
+      `${Math.round(offsetLat * 1e6)}_${Math.round(offsetLng * 1e6)}_` +
+      `${isCloudZoom ? "f" : "c"}_${count}_${colorCount}_${displaySize}`;
+    while (next.has(key)) key += "*"; // 万一名札が重複したらずらして衝突を防ぐ
+
+    const existing = markersRef.current.get(key);
+    if (existing) {
+      // 前回と同じマーカー：地図に一切触らず、そのまま引き継ぐ
+      markersRef.current.delete(key);
+      next.set(key, existing);
+      continue;
+    }
+
     // 調整エリアによるずらしを反映した最終座標で、表示位置を決める
     const coordinate = new window.mapkit.Coordinate(offsetLat, offsetLng);
 
@@ -1260,6 +1300,11 @@ function renderMarkers(
 
     // 霧はタップ不可（素通し）、円はタップ可（展開ズーム）
     annotation.enabled = isCluster && !isCloudZoom;
+    // ★2026-07-29：投稿フロー(applyAnnotationInteractivity)から復帰するとき
+    // に戻す「本来の値」。従来はここで設定しておらず、復帰時に霧まで
+    // enabled:true に戻っていた(＝霧がタップを吸収しうる状態・推定)。
+    // 差分更新でマーカーが長生きするようになるため、明示的に持たせる。
+    (annotation as any).__baseEnabled = isCluster && !isCloudZoom;
 
     if (isCluster && !isCloudZoom) {
       annotation.addEventListener("select", () => {
@@ -1279,11 +1324,17 @@ function renderMarkers(
         try { annotation.selected = false; } catch { /* noop */ }
       });
     }
-    return annotation;
-  });
+    next.set(key, annotation);
+    toAdd.push(annotation);
+  }
 
-  map.addAnnotations(finalAnnotations);
-  markersRef.current = finalAnnotations;
+  // 前回あって今回無いマーカー(markersRefに残った分)だけ削除し、
+  // 今回新しく必要になった分(toAdd)だけ追加する。
+  // 使い回したマーカーには一切触らないので、地図への操作量が最小になる。
+  const stale = Array.from(markersRef.current.values());
+  if (stale.length > 0) map.removeAnnotations(stale);
+  if (toAdd.length > 0) map.addAnnotations(toAdd);
+  markersRef.current = next;
 }
 
 const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
@@ -1307,7 +1358,11 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   const mapRef = useRef<any>(null);
   const reportMarkerRef = useRef<any>(null);
   const justPostedMarkerRef = useRef<any>(null);
-  const markersRef = useRef<any[]>([]);
+  // ★2026-07-29：確認ピンが出ている間かどうかを、reportPos側の処理からも
+  //   参照できるようにする（ズームロックの取り合いを防ぐため。下を参照）
+  const justPostedActiveRef = useRef(false);
+  // ★2026-07-29 差分更新化：配列 → Map(名札→マーカー) に変更
+  const markersRef = useRef<Map<string, any>>(new Map());
   const clusterIndexRef = useRef<Supercluster | null>(null);
   // 描き直しの入口（reports変更時などはこの参照を通して描き直す）
   const requestRenderRef = useRef<() => void>(() => {});
@@ -2188,6 +2243,14 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   // マーカーを画像版に描き直す（clusterIconCacheは上のuseEffectで既にクリア済み）
   useEffect(() => {
     if (!roachImageReady || !mapRef.current) return;
+    // ★2026-07-29 差分更新化に伴う注意★
+    // 絵文字→画像への描き直しは「見た目だけ」の変更で、差分更新の名札が
+    // 変わらない(＝そのまま使い回されて絵文字のまま残ってしまう)。
+    // ここだけは例外として、全マーカーを捨ててから描き直す。
+    if (markersRef.current.size > 0) {
+      mapRef.current.removeAnnotations(Array.from(markersRef.current.values()));
+      markersRef.current = new Map();
+    }
     renderMarkers(mapRef.current, markersRef, clusterIndexRef, mapContainerRef.current);
     applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
   }, [roachImageReady]);
@@ -2200,6 +2263,23 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   //
   // ★これはReactのstateなので、ページを更新・離脱すれば自動的に消える。
   //   その後は通常通り霧だけが残る。DBには何も保存していない。
+  //
+  // ============================================================
+  // ★2026-07-29 固まりバグの修正（本人の切り分けにより判明）★
+  //
+  // 【症状】投稿後、地図をタップして吹き出しを閉じ、🪳を押して開き直す、
+  // を繰り返してからピンチすると、地図が固まる（例の症状）。
+  //
+  // 【原因】この確認ピンだけが「タッチに反応する物体」として残っていた。
+  // 霧・🪳アイコン・📍管理者ピンは、過去の対策ですべてタッチ不感に
+  // してあるが、ここだけ対策から漏れていた。タッチに反応する物体の上で
+  // ピンチすると、MapKit内部のタッチ管理が壊れる（既知の真因）。
+  //
+  // 【対策】確認ピンが出ている間は、次の3つで発生経路そのものを塞ぐ。
+  //   ① ズームを禁止する（＝ピンチが起きない。パンは今まで通りできる）
+  //   ② 地図をタップしても吹き出しを閉じない（＝開閉の繰り返しが起きない）
+  //   ③ 🪳アイコンをタッチ不感にする（＝反応する物体が存在しなくなる）
+  // 吹き出しは「投稿を取り消す」「閉じる」を押したときだけ閉じる。
   // ============================================================
   useEffect(() => {
     const currentMap = mapRef.current;
@@ -2211,7 +2291,17 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       justPostedMarkerRef.current = null;
     }
 
-    if (!justPosted) return;
+    justPostedActiveRef.current = !!justPosted;
+
+    if (!justPosted) {
+      // 確認ピンが消えたのでズームを戻す。
+      // ただし位置選択中(reportPos)なら、そちらのロックを優先して維持する。
+      currentMap.isZoomEnabled = !reportPosRef.current;
+      return;
+    }
+
+    // ①ズーム禁止。ピンチが発生しないので、固まりの起点が消える。
+    currentMap.isZoomEnabled = false;
 
     const coordinate = new window.mapkit.Coordinate(justPosted.lat, justPosted.lng);
 
@@ -2224,7 +2314,12 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         // 見た目の位置がズレる。inline-block化して箱を固定する。
         div.style.display = "inline-block";
         div.style.lineHeight = "1";
-        div.style.cursor = "pointer";
+        // ③タッチ不感にする（📍管理者ピン・🪳アイコンと同じ方針）。
+        //   吹き出しは開きっぱなしなので、押して開き直す必要がない。
+        div.style.pointerEvents = "none";
+        div.style.userSelect = "none";
+        (div.style as any).webkitUserSelect = "none";
+        (div.style as any).webkitTouchCallout = "none";
 
         if (roachImageEl) {
           const img = document.createElement("img");
@@ -2250,14 +2345,34 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       }
     );
 
+    // ②「閉じる」「取り消す」を押すまで、吹き出しを閉じさせない。
+    //   dismissed が立つまでは、閉じられても開き直す。
+    let dismissed = false;
+    annotation.addEventListener("deselect", () => {
+      if (dismissed) return;
+      // MapKitの選択解除処理の直後に開き直す（同じ処理の途中で
+      // 選択し直すと競合するため、いったん処理を譲ってから行う）
+      setTimeout(() => {
+        try {
+          if (!dismissed && justPostedMarkerRef.current === annotation) {
+            annotation.selected = true;
+          }
+        } catch {
+          /* すでに地図から外れている場合は何もしない */
+        }
+      }, 0);
+    });
+
     annotation.callout = {
       calloutElementForAnnotation: () =>
         buildJustPostedCallout(
           justPosted,
           () => {
+            dismissed = true; // 以後は閉じてよい
             if (onDismissJustPostedRef.current) onDismissJustPostedRef.current();
           },
           () => {
+            dismissed = true;
             if (onJustPostedDeletedRef.current) onJustPostedDeletedRef.current();
           }
         ),
@@ -2267,6 +2382,11 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     // 吹き出しを最初から開いた状態にする（投稿できたことが一目で分かるように）
     currentMap.selectedAnnotation = annotation;
     justPostedMarkerRef.current = annotation;
+
+    // このピンが消されるとき（再投稿・離脱など）は、開き直しを止める
+    return () => {
+      dismissed = true;
+    };
   }, [justPosted, roachImageReady]);
 
   // ゴキブリピン（報告用ピン）のドラッグ・表示処理
@@ -2354,7 +2474,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         {
           draggable: false,
           calloutEnabled: true,
-          // ★2026-07-19：吹き出しを🪳の真上・中央に出す（以前の(-10.5,17)は
+          // ★2026-07-19:吹き出しを🪳の真上・中央に出す（以前の(-10.5,17)は
           //   横ズレの原因で、🪳がボタンの間に挟まって見えていた）
           calloutOffset: new DOMPoint(0, 12),
         }
@@ -2465,7 +2585,10 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       currentMap.selectedAnnotation = annotation;
       reportMarkerRef.current = annotation;
     } else {
-      currentMap.isZoomEnabled = true;
+      // ★2026-07-29：ここで無条件にズームを戻すと、投稿直後（確認ピンが
+      //   出ている＝reportPosがnullになった直後）にロックが打ち消される。
+      //   確認ピンが出ている間は、ロックしたままにする。
+      currentMap.isZoomEnabled = !justPostedActiveRef.current;
     }
   }, [reportPos]);
 
