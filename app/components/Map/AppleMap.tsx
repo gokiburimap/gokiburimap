@@ -1536,18 +1536,29 @@ const MERGE_RADIUS_PX_WIDE = 300;
 const MERGE_RADIUS_PX_NEAR = 100;
 const WIDE_VIEW_LNG_DEG = 8;
 
-// ★2026-07-29 差し戻し：霧モードでも今まで通りまとめる（100）。
+// ★2026-07-29 修正：霧モードでまとめてよい距離は、固定pxではなく
+//   「霧が実際に色をつけている範囲」から計算する。
 //
-// 【経緯】「投稿した地点まで霧が伸びない」対策として、いったん0
-// （＝まとめない）にしたところ、霧が約3倍に増え、同時に問い合わせ
-// 範囲も広げたため、霧の重なりで地図が固まるようになった。
-// 動作確認が取れていた100に戻す。
+// 【何が問題だったか】
+// 霧の画像には余白が含まれる（CLOUD_PADDING_RATIO=1.8）。そのため
+// 実際に色が見える半径は、設定値 MIN_COVERAGE_RADIUS_METERS(120m) の
+// 1.8分の1＝約67mしかない。
+// 一方まとめる距離は100pxという画面上の固定値で、深いズームでは
+// 90m前後に相当していた。
+// ＝67mしか覆えない霧が、90m先の投稿まで吸い込んでいた。
+// その差に投稿すると「吸収されたのに、そこに色がつかない」となる。
 //
-// 【次に試すなら】0ではなく40〜60程度にすると、すぐ隣のマスだけが
-// 独立した霧になり、数を増やしすぎずに霧を伸ばせる可能性がある。
-// ★ただし必ず1つずつ変えて確認すること。2つ同時に変えると
-//   どちらが原因か分からなくなる（今回それをやって失敗した）★
-const MERGE_RADIUS_PX_FOG = 100;
+// 【対策】まとめる距離を、霧が実際に覆う半径までに制限する。
+// こうすると、吸収された投稿は必ずその霧の内側に入る。
+// 画面の縮尺が変わっても、実世界の距離としては常に同じになる。
+//
+// 1.0 ＝ 霧のふちまで吸収してよい
+// 下げるほど、独立した霧ができやすくなる（霧の数は増える）
+const FOG_MERGE_COVERAGE_RATIO = 1.0;
+
+// 霧の画像に含まれる余白の比率。createCloudIconUrl の PADDING と連動
+// （0.4×2＋1＝1.8）。旧方式の同名の値と必ず同じにすること。
+const TILE_CLOUD_PADDING_RATIO = 1.8;
 
 type MergedTile = { lat: number; lng: number; count: number; colorCount: number };
 
@@ -1644,12 +1655,22 @@ function renderTileMarkers(
   }
 
   // 表示の広さで、まとめる距離を切り替える（上の定数のコメントを参照）
-  const radiusPx =
-    tileZ === TILE_MAX_Z
-      ? MERGE_RADIUS_PX_FOG // 霧モードはまとめない
-      : map.region.span.longitudeDelta >= WIDE_VIEW_LNG_DEG
+  let radiusPx: number;
+  if (tileZ === TILE_MAX_Z) {
+    // 霧モード：霧が実際に色をつけている半径（＝約67m）を、
+    // その場の縮尺で画面上のpxに換算した値を使う。
+    // これを超えてまとめると、吸収された投稿が霧の外に出てしまう。
+    const metersPerPx = calcMetersPerPixel(map, containerEl);
+    const fogVisibleRadiusM =
+      (MIN_COVERAGE_RADIUS_METERS / TILE_CLOUD_PADDING_RATIO) *
+      FOG_MERGE_COVERAGE_RATIO;
+    radiusPx = metersPerPx > 0 ? fogVisibleRadiusM / metersPerPx : 0;
+  } else {
+    radiusPx =
+      map.region.span.longitudeDelta >= WIDE_VIEW_LNG_DEG
         ? MERGE_RADIUS_PX_WIDE
         : MERGE_RADIUS_PX_NEAR;
+  }
   const items = mergeTilesOnScreen(map, rawItems, radiusPx);
 
   for (const item of items) {
