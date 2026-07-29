@@ -606,7 +606,12 @@ function createCloudIconUrl(count: number, colorCount: number, size: number, see
   //   反映すると、?mode=tile を付けていない一般の訪問者にも
   //   「霧が薄くなった」という変化が見える。
   // ============================================================
-  const MIN_CLOUD_OPACITY = 0.1;
+  // ★2026-07-29 その後の調整★
+  //   0.1では薄すぎて見えなかったため、下限を0.3に引き上げた。
+  //   上限も0.3なので、結果として濃さは一定になる（件数による差は無し）。
+  //   件数の違いは色で表現する、という方針。
+  //   ★濃さに差を戻したいときは MAX 側を 0.4〜0.5 に上げる★
+  const MIN_CLOUD_OPACITY = 0.3;
   const MAX_CLOUD_OPACITY = 0.3;
   const baseOpacity = Math.min(
     MIN_CLOUD_OPACITY + Math.log10(count) * 0.12,
@@ -2805,7 +2810,33 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       // 起動直後の1回目の描画。
       // ★新方式もここを通す。忘れると、地図を動かすまで何も表示されない。
       if (tileMode) {
-        doRender();
+        // ============================================================
+        // ★2026-07-29：起動直後に何も表示されない問題への対策
+        //
+        // 【症状】サイトを開いた直後はアイコンが0個で、画面をどこか
+        // 触ると出てくる。ウェルカム画面がある初回は正常に出る。
+        //
+        // 【原因（推定）】地図は作られた直後に指定の場所へ移動する。
+        // その移動が「操作が始まった」と判定され、飛んでいた1回目の
+        // 問い合わせが取り消される。移動が終われば描き直しが予約される
+        // はずだが、起動時の移動では終了の合図が出ないことがあり、
+        // 予約もされないまま何も描かれない状態で止まる。
+        // ウェルカム画面がある場合は、その待ち時間で地図が落ち着くため
+        // 1回目が成功する。症状の出方と一致する。
+        //
+        // 【対策】まだ1個も描けていない間だけ、少し待って描き直しを
+        // 試みる。描けたら止まる。回数にも上限があるので、
+        // 海の上など元々0個の場所を見ていても無限には繰り返さない。
+        // ============================================================
+        const ensureInitialTiles = (attempt: number) => {
+          if (cancelled || !mapRef.current) return;
+          if (markersRef.current.size > 0) return; // もう描けているので終了
+          doRender();
+          if (attempt < 4) {
+            setTimeout(() => ensureInitialTiles(attempt + 1), 700);
+          }
+        };
+        ensureInitialTiles(0);
       } else {
         renderMarkers(map, markersRef, clusterIndexRef, mapContainerRef.current);
         applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
