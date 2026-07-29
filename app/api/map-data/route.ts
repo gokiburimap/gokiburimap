@@ -37,8 +37,12 @@ const DETAIL_ZOOM = 16;
 const DETAIL_LIMIT = 5000;
 
 // 集計を持っているズームの範囲（SQL側の rebuild_report_tiles と揃える）
+// ★16まで持つ理由：地図が霧モードに入るのがズーム16なので、その手前まで
+//   細かい集計が必要。13までしか無いと、ズーム14〜15で粗い集計（4km四方）を
+//   狭い画面に出すことになり、代表座標に実際の投稿が無い場合、そこへ
+//   ズームした瞬間に表示が消える不具合が起きる。
 const TILE_ZOOM_MIN = 4;
-const TILE_ZOOM_MAX = 13;
+const TILE_ZOOM_MAX = 16;
 
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
