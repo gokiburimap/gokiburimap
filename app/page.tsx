@@ -272,7 +272,7 @@ export default function Home() {
             ゴキブリマップ
           </h1>
         </div>
-        <HeaderMenu />
+        {step === "idle" && !justPosted && <HeaderMenu />}
       </header>
       {/*
         ★2026-07-20：touchAction:"none" ＝この領域のタッチをブラウザに

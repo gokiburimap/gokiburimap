@@ -1447,6 +1447,25 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   const [locating, setLocating] = useState(false);
   const [locateError, setLocateError] = useState<string | null>(null);
 
+  // ============================================================
+  // 🚫 投稿の流れに入っている間は、現在地ボタンを出さない（2026-07-29）
+  //
+  // 【理由】押すと地図が現在地へ飛ぶ。位置調整ピンや確認画面が出ている
+  // 最中に飛ぶと、それらが画面の外に取り残される。ズームは止めてあるので
+  // 引いて探すこともできず、閉じるしか手が無くなる。
+  //
+  // 【止める範囲】ズームを止める条件（applyZoomLock）と同じ3場面に揃えた。
+  //   ・場所を選んでいる間 ・位置調整ピンが出ている間 ・確認画面が出ている間
+  //
+  // 【不便にならない理由】ズームが浅いとGボタンが弾かれる作りなので
+  // （page.tsx の isZoomedInEnough）、利用者は必ずGを押す前に地図を
+  // 合わせている。後から現在地へ飛ぶ必要は薄い。
+  //
+  // 【なぜ灰色にせず消すか】Gボタンと同じ考え方。押せないボタンが
+  // 残っていると「押してみよう」を誘うだけで、迷いの元になる。
+  // ============================================================
+  const inReportFlow = isSelecting || !!reportPos || !!justPosted;
+
   const handleLocate = () => {
     if (locating) return;
 
@@ -1462,6 +1481,16 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       (position) => {
         setLocating(false);
         if (!mapRef.current) return;
+        // ★2026-07-29：位置情報の取得は最長10秒かかる。押した後に投稿の
+        //   流れへ入っていた場合、ここで地図を動かすとピンや確認画面が
+        //   画面外に飛ぶ。取得できても動かさない。
+        if (
+          isSelectingRef.current ||
+          reportPosRef.current ||
+          justPostedActiveRef.current
+        ) {
+          return;
+        }
         const { latitude, longitude } = position.coords;
         mapRef.current.setRegionAnimated(
           new window.mapkit.CoordinateRegion(
@@ -1884,8 +1913,43 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
   useEffect(() => {
     if (!mapContainerRef.current) return;
+    const containerEl = mapContainerRef.current;
     let cancelled = false;
     let initialized = false;
+
+    // ============================================================
+    // 🔗 投稿の流れの最中は、地図の中のリンクを押せなくする（2026-07-29）
+    //
+    // 地図の左下にはAppleの法的表示（ロゴ・「Legal」）が出ており、
+    // 押すと別のページや画面が開く。場所を選んでいる最中や確認画面の
+    // 最中にこれが起きると、流れが中断される。
+    //
+    // 【消さずに「押せなく」する理由】
+    // この表示はMapKitの利用条件で掲出が求められているものなので、
+    // 見た目は一切変えない。押せなくするだけに留める。
+    //
+    // 【クラス名で狙わない理由】
+    // MapKitが内部で付けている名前はApple側の更新で変わりうる。
+    // 「リンク(aタグ)なら止める」という判定にしておけば、名前が
+    // 変わっても効き続ける。自前の吹き出しのボタンはbuttonタグなので
+    // 巻き込まれない。
+    // ============================================================
+    const blockMapLinks = (e: Event) => {
+      if (
+        !isSelectingRef.current &&
+        !reportPosRef.current &&
+        !justPostedActiveRef.current
+      ) {
+        return; // 通常閲覧中は今まで通り押せる
+      }
+      const el = e.target as HTMLElement | null;
+      if (el && typeof el.closest === "function" && el.closest("a")) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    containerEl.addEventListener("click", blockMapLinks, true);
+    containerEl.addEventListener("pointerdown", blockMapLinks, true);
 
     const setupMap = () => {
       if (initialized || !mapContainerRef.current) return;
@@ -2221,6 +2285,8 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
     return () => {
       cancelled = true;
+      containerEl.removeEventListener("click", blockMapLinks, true);
+      containerEl.removeEventListener("pointerdown", blockMapLinks, true);
       if (mapRef.current) {
         mapRef.current.destroy();
         mapRef.current = null;
@@ -2656,13 +2722,19 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
-      <SearchBar onSearch={handleSearch} />
+      {/* ★2026-07-29：投稿の流れに入っている間は検索バーを出さない。
+          検索すると地図が飛び、位置調整ピンや確認画面が画面外に
+          取り残されるため（現在地ボタンと同じ理由。inReportFlow を参照）。 */}
+      {!inReportFlow && <SearchBar onSearch={handleSearch} />}
 
       {/* ============================================================
           📍 現在地ボタン（2026-07-27 追加）
           PC・スマホとも右上。住所検索バーと高さを揃えてある。
           位置は上の LOCATE_PC / LOCATE_SP、大きさは LOCATE_SIZE で調整する。
+          ★2026-07-29：投稿の流れに入っている間は表示しない
+            （理由は上の inReportFlow のコメントを参照）
          ============================================================ */}
+      {!inReportFlow && (
       <button
         type="button"
         onClick={handleLocate}
@@ -2708,6 +2780,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
           <path d="M21 3L3 10.53v.98l6.84 2.65L12.48 21h.98L21 3z" />
         </svg>
       </button>
+      )}
 
       {/* 現在地が取得できなかったときの案内（4秒で自動的に消える） */}
       {locateError && (
