@@ -4,8 +4,6 @@ import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } f
 import Supercluster from "supercluster";
 import { supabase } from "../../lib/supabase";
 import SearchBar from "../SearchBar";
-// ★2026-07-29 タイル方式：画面に映っている範囲のデータだけを取ってくる
-import { fetchMapData } from "../../lib/mapData";
 
 // ============================================================
 // 📝 Report の型（2026-07-18 収集項目の見直しに伴い更新）
@@ -25,7 +23,6 @@ interface Report {
   lat: number;
   lng: number;
   nearby_count?: number; // ★2026-07-18 PostGIS：半径120m以内の投稿件数（DB側で事前計算）
-  weight?: number; // ★2026-07-29 タイル方式：区画の集計を表す点のときだけ入る。その区画の投稿数
   address?: string;
   occurred_on?: string; // "2026-07-18" 形式
   detail?: string;
@@ -113,11 +110,6 @@ const MAX_CLUSTER_ZOOM = 20;
 // 低い値が渡っていたため、同じ「16」でも切り替わるタイミングが
 // 従来より早く(浅いズームで)訪れる。円のままでいてほしい範囲が
 // 霧になってしまう場合は、この値を17〜18に上げて調整すること。
-//
-// ★2026-07-29 注意★
-// この値は /api/map-data 側の DETAIL_ZOOM と揃えること。
-// 地図が霧モードに入るズームと、APIが個別の投稿を返し始めるズームが
-// ズレると、切り替わりの瞬間に表示が消える。
 // ============================================================
 const CLOUD_ZOOM_THRESHOLD = 16;
 
@@ -1099,22 +1091,12 @@ function renderMarkers(
   const finalAnnotations = clusters.map((c: any) => {
     const [lng, lat] = c.geometry.coordinates;
     const isCluster = !!c.properties.cluster;
-
-    // ============================================================
-    // ★2026-07-29 タイル方式：件数の求め方
-    //   ・個別の投稿  … 従来どおり1件ずつ数える（weightは無い＝1）
-    //   ・区画の集計  … その区画の投稿数(weight)を使う
-    //   区画をまとめたクラスタは、weightの合計を持ち回っている
-    //   （下の Supercluster の map/reduce を参照）。
-    // ============================================================
-    const count = isCluster
-      ? (c.properties.weight ?? c.properties.point_count)
-      : (c.properties.report?.weight ?? 1);
+    const count = isCluster ? c.properties.point_count : 1;
 
     // ============================================================
     // ★2026-07-18 PostGIS対応：「数」の使い分け
     //
-    // ・count（superclusterのpoint_count／タイルのweight）
+    // ・count（superclusterのpoint_count）
     //     ＝ このクラスタに何個の投稿がまとまっているか。
     //     円モードの数字表示・霧のサイズ(伸び分)には引き続きこちらを使う。
     //
@@ -1145,6 +1127,7 @@ function renderMarkers(
     // 新規投稿が1件加わると重心がわずかに動く → 座標が変わる →
     // seedも変わる → 霧の形とオフセットも変わる。
     // 「投稿したら近くの霧が動いた」ように見える一因はこれ。
+    // 根本解決はPostGIS方式（固定半径カウント）への移行が必要。
     const seed = Math.abs(Math.round(lat * 1e6) * 1000003 + Math.round(lng * 1e6));
 
     // ★中心オフセット：実際の座標(lat, lng)から、seed固定でごくわずかにずらした
@@ -1178,6 +1161,13 @@ function renderMarkers(
       // 【安全弁】HARD_MAX_CLOUD_PX
       //   ＝ 深いズームでCanvasが巨大化して重くなるのを防ぐだけ。
       //     通常は発動しない。
+      //
+      // 【修正前の何が問題だったか】
+      //   Math.min(Math.max(natural, minCoverage) + growth, 220) と
+      //   書かれており、土台ごと220pxに潰されていた。霧モードの
+      //   全域で常に220px固定になっており、MIN_COVERAGE_RADIUS_METERS を
+      //   いくら上げても見た目が1pxも変わらなかった。
+      //   さらに実効の保証半径が46m前後まで縮んでいた（意図は120m）。
       // ============================================================
       const naturalDisplaySize = Math.round(baseSize * CLOUD_PADDING_RATIO);
       const floorSize = Math.max(naturalDisplaySize, minCoverageSize);
@@ -1199,8 +1189,9 @@ function renderMarkers(
       //      外向きに、霧の半径ぶん＋margin_m だけ中心をずらす
       // これで、霧が建物にかからなくなる。
       //
-      // ★調整値の変更は、管理画面の調整エリアの登録内容
+      // ★調整値の変更は、管理画面の霧調整エリアの登録内容
       //   （大きさの倍率 size_scale／余裕 margin_m）で行う。
+      //   コード側の既定値は上の型定義の初期値とSQLのdefaultを参照。
       // ============================================================
       const area = findFogAdjustArea(lat, lng);
       if (area) {
@@ -1211,6 +1202,7 @@ function renderMarkers(
         //    ★重要：霧の画像には余白が含まれる（CLOUD_PADDING_RATIO=1.8）。
         //      見た目の霧のふちは画像の端より内側にあるので、ずらす距離は
         //      「画像サイズ÷2」ではなく「余白を除いた実際の半径」で計算する。
+        //      ここを画像サイズで計算すると2倍近くずれてしまう（修正済み）。
         const metersPerPx = calcMetersPerPixel(map, containerEl);
         const visibleRadiusPx = displaySize / 2 / CLOUD_PADDING_RATIO;
         const radiusM = visibleRadiusPx * metersPerPx;
@@ -1252,7 +1244,7 @@ function renderMarkers(
     // ============================================================
     // マーカー生成（2026-07-22 シンプル化・引き算）
     //
-    // 泥沼の元凶だった「全マーカー触覚ゼロ＋自前タップ判定＋
+    // 今日の泥沼の元凶だった「全マーカー触覚ゼロ＋自前タップ判定＋
     // タッチ監視で地図をいじる」構成を撤去。素のMapKitに戻す：
     //   ・霧(isCloudZoom) … タップ不要なので enabled:false（素通し）
     //   ・円(🪳+数字)     … タップで展開ズーム。標準の enabled:true ＋
@@ -1319,15 +1311,6 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   const clusterIndexRef = useRef<Supercluster | null>(null);
   // 描き直しの入口（reports変更時などはこの参照を通して描き直す）
   const requestRenderRef = useRef<() => void>(() => {});
-
-  // ============================================================
-  // 🗺 タイル方式のための状態（2026-07-29 追加）
-  // ============================================================
-  // 絞り込みの期間（将来のフィルター機能用。今は全期間固定）
-  const periodRef = useRef<"all" | "1y" | "3m">("all");
-  // 初回の描画が済んだか（初回だけは即描いて、表示を早くする）
-  const firstRenderDoneRef = useRef(false);
-
   const [reports, setReports] = useState<Report[]>([]);
 
   // ============================================================
@@ -1519,7 +1502,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     });
 
 
-    // ── 非表示ボタン（データは残す。削除依頼物件に隣家の霧が
+    // ── 霧だけ非表示ボタン（データは残す。削除依頼物件に隣家の霧が
     //    かかる場合などに、投稿を消さずに地図から隠す用途）──────────
     const hideBtn = document.createElement("button");
     let hidden = r.hidden === true;
@@ -1552,7 +1535,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         r.hidden = next; // 手元の状態も更新（再度開いた時に正しく出す）
         hideBtn.disabled = false;
         paintHideBtn();
-        // 地図を最新化（非表示なら消える・再表示なら戻る）
+        // 霧を最新化（非表示なら消える・再表示なら戻る）
         fetchReports();
         // 管理ピンも描き直してピンの色（📍⇔🟡）を即反映する
         renderAdminPinsRef.current(map);
@@ -1595,7 +1578,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         }
         map.removeAnnotation(ann);
         adminPinsRef.current = adminPinsRef.current.filter((a) => a !== ann);
-        // 地図（nearby_count）を最新に描き直す
+        // 霧（nearby_count）を最新に描き直す
         fetchReports();
       } catch {
         delBtn.disabled = false;
@@ -1643,7 +1626,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
             div.style.lineHeight = "1";
             div.style.fontSize = "24px";
             div.style.filter = "drop-shadow(0 1px 2px rgba(0,0,0,0.4))";
-            // 非表示にした投稿は、通常の📍と区別できるよう🟡にする
+            // 霧を非表示にした投稿は、通常の📍と区別できるよう🟡にする
             // （紛らわしさ防止。黄色は地図上で目立つ）。通常は📍。
             div.textContent = r.hidden === true ? "🟡" : "📍";
             // ★2026-07-20：📍も触覚ゼロにする。タッチに反応する物体の上で
@@ -1736,43 +1719,72 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     },
   }));
 
-  // ============================================================
-  // 🗺 地図データの取得（2026-07-29 タイル方式に変更）
-  //
-  // 【変更の理由】
-  // 従来は全投稿をブラウザに配っていたため、数十万件を超えると
-  // 転送量とメモリで破綻する作りだった（引継ぎメモ 10-3 の課題）。
-  // 現在は「画面に映っている範囲のぶんだけ」を取得する。
-  //   ・ズームが浅い … 区画ごとの集計（1区画＝1点。weightに件数）
-  //   ・ズームが深い … 画面内の個別の投稿
-  // 総件数が何百万件になっても、受け取る量は画面の広さで決まる。
-  //
-  // 【★固まり不具合への配慮（最重要）★】
-  // ここでは取得だけを行い、描き直しは呼ばない。setReports によって
-  // 下の useEffect([reports]) が走るが、そこでも「初回以外は描かない」
-  // ようにしてある。マーカーを作り直すのは region-change-end の
-  // settleTimer（＝ピンチの収束が終わったあと）の1箇所だけ。
-  // 収束中にマーカーを作り直すと地図が固まる不具合があったため、
-  // 地図に触る場所を1つに絞ってある。
-  // ============================================================
   const fetchReports = async () => {
-    const map = mapRef.current;
-    if (!map) return;
+    const PAGE_SIZE = 1000;
 
-    const zoom = calcSuperclusterZoom(map, mapContainerRef.current);
-    const result = await fetchMapData(map, zoom, periodRef.current);
+    // ============================================================
+    // ★2026-07-19 高速化：ページを「順番に」ではなく「一斉に」取る
+    //
+    // 従来は1000件ずつ順番に取得していたため、3.5万件なら35回の通信が
+    // 数珠つなぎになり、全部届くまでゴキブリが表示されなかった
+    // （初回表示が遅い最大の原因）。
+    // 先に総件数だけ聞き、必要なページ数ぶんのリクエストを同時に投げる
+    // ことで、通信時間が「35往復分」から「ほぼ1往復分」になる。
+    //
+    // 取得カラムを id, lat, lng, nearby_count に絞る方針は従来通り
+    // （地図に不要な情報をブラウザに配らない＋転送量削減）。
+    //
+    // ★既知の限界（2026-07-27 追記）★
+    // この方式は「全件をブラウザに持つ」ことが前提。投稿が数十万件を
+    // 超えると転送量・メモリの両方で破綻する。そのときは、日本を
+    // 約120m四方のマス目に区切り、マスごとの集計値だけを画面の範囲分
+    // 配る方式（＝地図・取得・DBの作り直し）への移行が必要。
+    // なお nearby_count をDB側で事前計算する現在の設計は、その方式でも
+    // そのまま通用する（作り直すのは取得と描画だけ）。
+    // ============================================================
+    // hidden=true（管理者が「霧だけ非表示」にした投稿）は最初から取得しない。
+    // ＝地図に描かれない。データ自体は残るので、いつでも復活できる。
+    // 表示処理には一切触れないので、タッチ挙動に影響しない安全な方式。
+    const { count, error: countError } = await supabase
+      .from("reports")
+      .select("id", { count: "exact", head: true })
+      .not("hidden", "is", true);
 
-    // 通信に失敗したときは、前回の表示をそのまま残す（画面が空になるより良い）
-    if (!result) return;
+    if (countError) {
+      console.error("reports件数取得エラー:", countError);
+      return;
+    }
+    const total = count ?? 0;
+    if (total === 0) {
+      setReports([]);
+      return;
+    }
 
-    setReports(result.points as Report[]);
+    const pageCount = Math.ceil(total / PAGE_SIZE);
+    const results = await Promise.all(
+      Array.from({ length: pageCount }, (_, i) =>
+        supabase
+          .from("reports")
+          .select("id, lat, lng, nearby_count")
+          .not("hidden", "is", true)
+          .order("id", { ascending: true })
+          .range(i * PAGE_SIZE, (i + 1) * PAGE_SIZE - 1)
+      )
+    );
+
+    const allReports: any[] = [];
+    results.forEach((r, i) => {
+      if (r.error) {
+        console.error(`reports取得エラー(ページ${i + 1}):`, r.error);
+      } else if (r.data) {
+        allReports.push(...r.data);
+      }
+    });
+    setReports(allReports);
   };
 
   useEffect(() => {
-    // 地図がまだ無いときは、setupMap 側の初回取得に任せる
-    if (!mapRef.current) return;
     fetchReports();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshTrigger]);
 
   useEffect(() => {
@@ -1863,7 +1875,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
         renderAdminPinsRef.current(map); // 管理者モード時のみ実際に描画される
 
-        // 🌫️ 表示範囲が変わっていれば、その範囲の調整エリアを取り直す。
+        // 🌫️ 表示範囲が変わっていれば、その範囲の霧調整エリアを取り直す。
         //    中身が実際に変わったときだけ、もう一度だけ描き直す
         //    （updatedがtrueのときは範囲キャッシュが更新済みなので、
         //      次回は false が返り、無限ループにはならない）。
@@ -1893,27 +1905,20 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       // 連続操作中はregion-change-endのたびにタイマーを張り直すので、
       // 作り直しは「手が完全に止まって収束も終わった後の1回」だけになる。
       //
-      // ★★2026-07-29 タイル方式への移行時の注意★★
-      // データ取得（fetchReports）は別のタイマー（FETCH_MS）で動かし、
-      // 取得が終わってもその場では描き直さない。描き直すのは、必ず
-      // この settleTimer の中だけ。地図に触る場所を1箇所に絞ることで、
-      // 収束中の割り込みが構造的に起きないようにしてある。
+      // 【副作用】操作中は霧が古いサイズのまま追従し、止めた瞬間に正しい
+      // サイズ・クラスタに再計算される。これは意図した動作。
       // ============================================================
       const SETTLE_MS = 500;
       let settleTimer: ReturnType<typeof setTimeout> | null = null;
 
-      // データ取得のタイミング。描画とは無関係なので早めでよい。
-      const FETCH_MS = 150;
-      let fetchTimer: ReturnType<typeof setTimeout> | null = null;
-
       // ============================================================
-      // 🗺 エリアの形を線で描く（2026-07-22・管理画面の描画地図で使う）
+      // 🗺 エリアの形を線で描く（2026-07-22・管理者モード限定）
       //
       // 新しく範囲を設定するとき、既存のエリアと重ならないよう確認するため
       // の機能。「エリアを表示」がオンのときだけ、今見えている範囲の
       // 禁止エリア・調整エリアを線で描く。
       //
-      // ・投稿禁止エリア＝赤の線／調整エリア＝黄の線
+      // ・投稿禁止エリア＝赤の線／調整エリア＝オレンジの線
       // ・線は太め。塗りつぶしは薄くして、地図が読めるようにする
       // ・タッチには反応させない（地図の操作を妨げない・不具合の予防）
       // ・数は多くても数十本で、描き直す頻度も低いため動作は軽い
@@ -1942,7 +1947,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       };
 
       const drawAreaShapes = async () => {
-        // オフのときは、描いてあるものを消して終了
+        // オフ、または管理者モードでなければ、描いてあるものを消して終了
         if (!showAreasRef.current) {
           clearAreaShapes();
           return;
@@ -2046,28 +2051,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       };
       drawAreaShapesNowRef.current = drawAreaShapes;
 
-      // ============================================================
-      // 🗺 データ取得と描き直しを、別々のタイミングで動かす（2026-07-29）
-      //
-      // ・取得（FETCH_MS=150ms）… 地図が止まったら早めに取りに行く。
-      //   通信は地図に触らないので、収束中に走っても害がない。
-      // ・描き直し（SETTLE_MS=500ms）… 従来どおり。収束が終わってから
-      //   1回だけマーカーを作り直す。ここだけが地図に触る唯一の場所。
-      //
-      // ★この分離が要点★
-      // 取得が終わった瞬間に描き直す作りにすると、その描き直しが
-      // ピンチの収束と重なって地図が固まる。届いたデータはいったん
-      // 置いておくだけにして、描くのは必ず settleTimer の中だけにする。
-      // ============================================================
       map.addEventListener("region-change-end", () => {
-        // ① 取得の予約（早め）。取得するだけで、描き直しはしない
-        if (fetchTimer) clearTimeout(fetchTimer);
-        fetchTimer = setTimeout(() => {
-          fetchTimer = null;
-          fetchReports();
-        }, FETCH_MS);
-
-        // ② 描き直しの予約（収束後）
         if (settleTimer) clearTimeout(settleTimer);
         settleTimer = setTimeout(() => {
           settleTimer = null;
@@ -2075,7 +2059,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
           drawAreaShapesRef.current(); // エリアの線も追従させる
         }, SETTLE_MS);
       });
-      // 次の操作が始まったら、予約中の描き直しは取り消す（操作中は作らない）
+      // 次の操作が始まったら、予約中の作り直しは取り消す（操作中は作らない）
       map.addEventListener("region-change-start", () => {
         if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
       });
@@ -2084,9 +2068,6 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
       renderAdminPinsRef.current(map);
 
-      // 🗺 起動直後に1回だけ取得する（待たずにすぐ表示するため）
-      fetchReports();
-
       // 🌫️ 起動直後にも調整エリアを1回読み込む（以後はdoRender内で範囲追従）
       loadFogAdjustAreas(map).then((updated) => {
         if (updated && !cancelled && mapRef.current) doRender();
@@ -2094,12 +2075,19 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
       map.addEventListener("single-tap", async (event: any) => {
         // ============================================================
-        // 📍 管理者ピンのタップ判定（ピンも触覚ゼロ化したため自前判定）
-        //    通常閲覧中（投稿フロー外）のみ。
+        // 🪳 円(🪳+数字)のタップ展開ズーム（2026-07-20 自前判定に変更）
+        //
+        // 全マーカーを触覚ゼロにしたため、アノテーションのselectは
+        // もう発火しない。代わりに、地図が受けたタップの画面座標と、
+        // 各円の画面上の中心・半径を比べて「円が押されたか」を判定する。
+        // 通常閲覧中（投稿フロー外）のみ。
         // ============================================================
         if (!isSelectingRef.current && !reportPosRef.current) {
           const tapPt = event.pointOnPage;
 
+
+          // 📍管理者ピンのタップ判定（ピンも触覚ゼロ化したため自前判定。
+          // 　視覚的に最前面なので、円より先に判定する）
           for (const pin of adminPinsRef.current) {
             const h = (pin as any)?.__adminHit;
             if (!h) continue;
@@ -2165,21 +2153,13 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     // あっても濃くなることはない」という単調性が保証され、
     // 「ズームインで件数が減るのは自然、増えるのは不自然」という
     // 直感と一致する。
-    //
-    // ★2026-07-29 タイル方式：weight も持ち回る
-    // 個別の投稿は1、区画の集計はその区画の件数。クラスタにまとまった
-    // ときは合計して、円の数字と霧の大きさに使う。
     // ============================================================
     clusterIndexRef.current = new Supercluster({
       radius: 100,
       maxZoom: MAX_CLUSTER_ZOOM,
-      map: (props: any) => ({
-        maxNearby: props.report?.nearby_count ?? 1,
-        weight: props.report?.weight ?? 1,
-      }),
+      map: (props: any) => ({ maxNearby: props.report?.nearby_count ?? 1 }),
       reduce: (accumulated: any, props: any) => {
         accumulated.maxNearby = Math.max(accumulated.maxNearby, props.maxNearby);
-        accumulated.weight = (accumulated.weight ?? 0) + (props.weight ?? 1);
       },
     });
     clusterIndexRef.current.load(
@@ -2191,24 +2171,11 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     );
 
     if (!mapRef.current) return;
-
-    // ============================================================
-    // ★固まり不具合の防止（最重要）★
-    //
-    // ここでは描き直さない。データが届くタイミングは地図の操作と無関係で、
-    // ピンチの収束中に重なることがあるため。収束中にマーカーを作り直すと
-    // MapKitのジェスチャー処理が壊れ、地図が固まって「1本指でズームする」
-    // 状態になる（長時間の切り分けで特定した原因）。
-    // 描き直しは region-change-end の settleTimer（収束後の1回）に任せる。
-    //
-    // ただし初回だけは例外。地図を開いた直後はまだ何も描かれておらず、
-    // 操作もされていない（＝収束中ではない）ので、すぐ描いて表示を早くする。
-    // ============================================================
-    if (!firstRenderDoneRef.current) {
-      firstRenderDoneRef.current = true;
-      renderMarkers(mapRef.current, markersRef, clusterIndexRef, mapContainerRef.current);
-      applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
-    }
+    // reports（投稿データ）が変わったら、クラスタ木を作り直して1回描画する。
+    // これはユーザー操作中ではないので即描画でよい（デバウンス対象は
+    // region-changeによる連続再描画のみ）。
+    renderMarkers(mapRef.current, markersRef, clusterIndexRef, mapContainerRef.current);
+    applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
   }, [reports]);
 
   // isSelecting・reportPosが変化した瞬間にも、既存の霧アノテーションの
@@ -2569,7 +2536,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
           height="16"
           viewBox="0 0 24 24"
           fill="none"
-          stroke="#666"
+          stroke="#888"
           strokeWidth="2"
           strokeLinejoin="round"
           strokeLinecap="round"
