@@ -944,7 +944,13 @@ function buildJustPostedCallout(
 ) {
   const container = document.createElement("div");
   container.style.cssText =
-    "background:#FFFFFF;border-radius:12px;padding:14px 16px;box-shadow:0 4px 16px rgba(0,0,0,0.18);min-width:220px;max-width:280px;text-align:left;";
+    "background:#FFFFFF;border-radius:12px;padding:14px 16px;box-shadow:0 4px 16px rgba(0,0,0,0.18);min-width:220px;max-width:280px;text-align:left;" +
+    // ★2026-07-29：文字の選択・コピーを禁止する。
+    //   長押しでiOSの選択メニューが出るのを防ぐのが主目的。
+    //   あれは「タッチに反応する挙動」そのもので、この地図で何度も
+    //   固まりの原因になってきた種類のもの。見た目の粗さも同時に消える。
+    //   ※子要素にも引き継がれるので、中の文字とボタンにも効く。
+    "user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;";
 
   const title = document.createElement("p");
   title.textContent = "投稿を受け付けました";
@@ -1526,7 +1532,9 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   const buildAdminPinCallout = (r: any, map: any, ann: any) => {
     const box = document.createElement("div");
     box.style.cssText =
-      "background:#FFFFFF;border-radius:12px;padding:12px 14px;box-shadow:0 4px 16px rgba(0,0,0,0.18);min-width:210px;max-width:270px;text-align:left;";
+      "background:#FFFFFF;border-radius:12px;padding:12px 14px;box-shadow:0 4px 16px rgba(0,0,0,0.18);min-width:210px;max-width:270px;text-align:left;" +
+      // ★2026-07-29：確認画面と同じ理由で、選択・長押しメニューを禁止する
+      "user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;";
 
     const title = document.createElement("p");
     title.textContent = `投稿 #${r.id}（管理者のみ表示）`;
@@ -2489,7 +2497,11 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
           // ============================================================
           const container = document.createElement("div");
           container.style.cssText =
-            "position:relative;background:#FFFFFF;border-radius:12px;padding:12px 14px;box-shadow:0 4px 16px rgba(0,0,0,0.18);text-align:center;min-width:210px;";
+            "position:relative;background:#FFFFFF;border-radius:12px;padding:12px 14px;box-shadow:0 4px 16px rgba(0,0,0,0.18);text-align:center;min-width:210px;" +
+            // ★2026-07-29：案内文には既に指定していたが、箱全体には
+            //   掛かっておらず、ボタンの文字が選択できる状態だった。
+            //   ここはドラッグ操作をする箱なので、選択が入ると特に邪魔になる。
+            "user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;";
 
           // 🪳へ向かう三角のしっぽ
           const tail = document.createElement("div");
