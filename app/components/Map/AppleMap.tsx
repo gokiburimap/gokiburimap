@@ -589,16 +589,25 @@ function createCloudIconUrl(count: number, colorCount: number, size: number, see
   // ============================================================
   // 【③霧の濃さはここ】
   //
-  // ★現在は「投稿したことが分かりやすいように」動作確認用の
-  //   濃い設定(0.5〜0.9)になっている。本番前に必ず戻すこと。
-  //   本番の目安： MIN 0.1 / MAX 0.3（建物がうっすら透ける濃さ）
+  // ★2026-07-29：動作確認用の濃い設定(0.5〜0.9)から、本番想定の
+  //   値に変更した。建物がうっすら透ける濃さになる。
   //
   // MIN_CLOUD_OPACITY : 1件目の濃さ
   // MAX_CLOUD_OPACITY : 件数が増えたときの濃さの天井
   // 係数(0.12)        : 少ない件数でも濃さの変化を速く出したいなら上げる
+  //
+  // 【全体をもっと濃くしたいとき】MIN側を上げる（例：0.15〜0.2）。
+  // 【濃さを件数で変えたくないとき】MINとMAXを同じ値にすれば固定になる。
+  //   なお、この仕組み自体に処理の負担は無い（濃さは件数から決まり、
+  //   件数は既に画像キャッシュの見出しに含まれているため、画像の枚数は
+  //   増えない）。残しておいても他の動作に影響しない。
+  //
+  // ★この設定は旧方式・新方式の両方で使われる共通部分★
+  //   反映すると、?mode=tile を付けていない一般の訪問者にも
+  //   「霧が薄くなった」という変化が見える。
   // ============================================================
-  const MIN_CLOUD_OPACITY = 0.5;
-  const MAX_CLOUD_OPACITY = 0.9;
+  const MIN_CLOUD_OPACITY = 0.1;
+  const MAX_CLOUD_OPACITY = 0.3;
   const baseOpacity = Math.min(
     MIN_CLOUD_OPACITY + Math.log10(count) * 0.12,
     MAX_CLOUD_OPACITY
@@ -1777,6 +1786,16 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   // ★2026-07-29：確認ピンが出ている間かどうかを、reportPos側の処理からも
   //   参照できるようにする（ズームロックの取り合いを防ぐため。下を参照）
   const justPostedActiveRef = useRef(false);
+  // ★2026-07-29 修正：この値は「描画のたび」にここで合わせる。
+  //
+  // 【なぜここか】投稿が完了すると、justPosted のセットと
+  // refreshTrigger の更新が同時に起きる。このとき
+  //   ・refreshTrigger の useEffect（描き直し）… 先に走る
+  //   ・justPosted の useEffect（この値の更新）… 後に走る
+  // という順番になるため、あちらで更新していると「まだ確認画面は
+  // 開いていない」と誤判定され、確認画面が出ているのに霧が描かれた。
+  // ここで合わせておけば、どのuseEffectから見ても必ず最新になる。
+  justPostedActiveRef.current = !!justPosted;
   // ★2026-07-29 差分更新化：配列 → Map(名札→マーカー) に変更
   const markersRef = useRef<Map<string, any>>(new Map());
   const clusterIndexRef = useRef<Supercluster | null>(null);
@@ -2550,6 +2569,8 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         // ★通信中に地図が動き出していたら、ここで手を引く。
         //   動いている最中にマーカーを入れ替えると地図が固まる。
         if (mapMoving) return;
+        // ★通信中に確認画面が開いた場合も描かない（閉じた時点で描き直す）
+        if (justPostedActiveRef.current) return;
         if (cancelled || !mapRef.current) return;
 
         if (error || !rows) {
