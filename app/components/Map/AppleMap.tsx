@@ -2454,6 +2454,21 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       // ピンチ連打の確認は必要）。
       // ============================================================
       let tileSeq = 0;
+      // ★2026-07-29 固まりバグの修正★
+      //
+      // 【何が起きていたか】
+      // 新方式の描き直しには通信の待ちがある（旧方式には無かった）。
+      // 「操作が始まったら描き直しを取り消す」仕組みは入れてあるが、
+      // すでに飛んでいる通信は取り消せない。その返事がパン・ズームの
+      // 最中に届き、マーカーの入れ替えを行ってしまう。これは過去に
+      // 何度も固まりの原因になった「収束中への割り込み」そのもの。
+      // 近くに霧があるほど入れ替わるマーカーが増えるので、
+      // 「霧がある場所で投稿すると起きる」という症状になっていた。
+      //
+      // 【対策】地図が動いている間は、届いた返事を捨てる。
+      // 操作が終われば必ず描き直しが予約される（region-change-end →
+      // 0.5秒後）ので、捨てても表示が古いままにはならない。
+      let mapMoving = false;
       const doRenderTiles = async () => {
         const seq = ++tileSeq;
         const currentZoom = calcSuperclusterZoom(map, mapContainerRef.current);
@@ -2464,6 +2479,9 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         const { rows, error } = await fetchTiles(map, mapContainerRef.current, tileZ, null);
 
         if (seq !== tileSeq) return; // 追い越された古い返事なので捨てる
+        // ★通信中に地図が動き出していたら、ここで手を引く。
+        //   動いている最中にマーカーを入れ替えると地図が固まる。
+        if (mapMoving) return;
         if (cancelled || !mapRef.current) return;
 
         if (error || !rows) {
@@ -2482,6 +2500,13 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       const doRender = () => {
         // ★新方式はここで完全に枝分かれする。以降は旧方式の処理を通らない。
         if (tileMode) {
+          // ★2026-07-29：確認画面が開いている間は描き直さない。
+          //   マーカーを入れ替えると吹き出しが選択解除されることがあり、
+          //   それを開き直す処理が地図を動かし、また描き直しが走る、
+          //   という循環に入りうる。閉じた時点で必ず描き直すので、
+          //   投稿ぶんの霧が出ないままになることはない
+          //   （justPosted の useEffect を参照）。
+          if (justPostedActiveRef.current) return;
           void doRenderTiles();
           renderAdminPinsRef.current(map);
           loadFogAdjustAreas(map).then((updated) => {
@@ -2671,6 +2696,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       drawAreaShapesNowRef.current = drawAreaShapes;
 
       map.addEventListener("region-change-end", () => {
+        mapMoving = false;
         if (settleTimer) clearTimeout(settleTimer);
         settleTimer = setTimeout(() => {
           settleTimer = null;
@@ -2680,6 +2706,10 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       });
       // 次の操作が始まったら、予約中の作り直しは取り消す（操作中は作らない）
       map.addEventListener("region-change-start", () => {
+        // ★新方式：すでに飛んでいる通信の返事も、ここで無効にする。
+        //   番号を進めると、古い返事は seq の照合で捨てられる。
+        mapMoving = true;
+        tileSeq++;
         if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
       });
 
@@ -2877,6 +2907,9 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
     if (!justPosted) {
       applyZoomLock(); // 確認画面が消えたので、他に止める理由が無ければ戻る
+      // ★2026-07-29 新方式：確認画面が開いている間は描き直しを止めている
+      //   （doRender を参照）。閉じたこの瞬間に、投稿ぶんを含めて描き直す。
+      if (tileMode) requestRenderRef.current();
       return;
     }
 
