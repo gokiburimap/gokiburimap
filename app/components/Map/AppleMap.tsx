@@ -123,7 +123,7 @@ const MAX_CLUSTER_FONT_SIZE_PX = 18;
 // ============================================================
 // 🔵【③円モードのサイズ上限はここ】
 // 数値を下げるほど、円が最大までズームしても大きくなりすぎなくなる
-// ★2026-07-17:🪳アイコン化に伴い、ズームイン時に大きくなりすぎるとの
+// ★2026-07-17：🪳アイコン化に伴い、ズームイン時に大きくなりすぎるとの
 // フィードバックを受けて140→100に下げた
 // ============================================================
 const MAX_CIRCLE_DISPLAY_SIZE_PX = 100;
@@ -910,9 +910,7 @@ async function performTapAction(
 // DOM要素の生成タイミングに依存しないため、レンダリング競合が起きない。
 // ============================================================
 function applyAnnotationInteractivity(
-  // ★2026-07-29 差分更新化に伴い、配列→Map(名札→マーカー)に変更。
-  //   Mapのforeachも「値」が第1引数なので、下の処理本体は変更不要。
-  markersRef: { current: Map<string, any> },
+  markersRef: { current: any[] },
   isSelectingRef: { current: boolean },
   reportPosRef: { current: { lat: number; lng: number } | null }
 ) {
@@ -1051,29 +1049,15 @@ function buildJustPostedCallout(
 // clusterIndexRef.current にはすでに構築済みのSuperclusterインスタンスが
 // 入っている前提で、bbox・zoomに応じた getClusters() の取り出しだけを行う。
 // 木構築は reports が変わった時の useEffect 側の責務。
-// ============================================================
-// 🔁 差分更新（2026-07-29 段階1）
-//
-// 【従来】毎回、全マーカーを削除 → 全マーカーを作り直し → 全部追加。
-//   パンで少し動かしただけでも、画面内の全部が消えて再生成されていた。
-//
-// 【現在】マーカーごとに「名札(キー)」を付けて前回分と照合し、
-//   ・前回と同じ名札のマーカー … 地図に一切触らず、そのまま使い回す
-//   ・前回あって今回無いもの   … その分だけ削除
-//   ・今回新しく必要なもの     … その分だけ追加
-//   にする。markersRef は配列ではなく Map(名札→マーカー) で持つ。
-//
-// 【効果の見込み】パン時は端の出入り分だけの操作になる（推定：大幅減）。
-//   ズーム時はサイズが変わるため名札も変わり、結果的に従来同様の
-//   全入れ替えになる（＝ズーム時の挙動は従来と同じ。悪化はしない）。
-// ============================================================
 function renderMarkers(
   map: any,
-  markersRef: { current: Map<string, any> },
+  markersRef: { current: any[] },
   clusterIndexRef: { current: Supercluster | null },
   containerEl: HTMLDivElement | null
 ) {
   if (!clusterIndexRef.current) return;
+
+  markersRef.current.forEach((m) => map.removeAnnotation(m));
 
   const span = map.region.span;
   const center = map.region.center;
@@ -1104,11 +1088,7 @@ function renderMarkers(
   const zoom = Math.min(currentZoom, MAX_CLUSTER_ZOOM);
   const clusters = clusterIndexRef.current.getClusters(bbox, zoom);
 
-  // 今回の描画で「あるべきマーカーの一覧」を名札付きで組み立てる
-  const next = new Map<string, any>();
-  const toAdd: any[] = [];
-
-  for (const c of clusters as any[]) {
+  const finalAnnotations = clusters.map((c: any) => {
     const [lng, lat] = c.geometry.coordinates;
     const isCluster = !!c.properties.cluster;
     const count = isCluster ? c.properties.point_count : 1;
@@ -1258,26 +1238,6 @@ function renderMarkers(
       icon = getCachedClusterIconUrl(count, displaySize);
     }
 
-    // ============================================================
-    // 🔖 このマーカーの名札(キー)。
-    // 位置・モード(霧/円)・件数・色・サイズが全部同じなら「同じマーカー」
-    // とみなして使い回す。どれか1つでも違えば別物として作り直す。
-    // ※霧の形はseedで決まり、seedは座標から決まるので、位置が同じなら
-    //   形も同じ。名札に形の情報を別途入れる必要はない。
-    // ============================================================
-    let key =
-      `${Math.round(offsetLat * 1e6)}_${Math.round(offsetLng * 1e6)}_` +
-      `${isCloudZoom ? "f" : "c"}_${count}_${colorCount}_${displaySize}`;
-    while (next.has(key)) key += "*"; // 万一名札が重複したらずらして衝突を防ぐ
-
-    const existing = markersRef.current.get(key);
-    if (existing) {
-      // 前回と同じマーカー：地図に一切触らず、そのまま引き継ぐ
-      markersRef.current.delete(key);
-      next.set(key, existing);
-      continue;
-    }
-
     // 調整エリアによるずらしを反映した最終座標で、表示位置を決める
     const coordinate = new window.mapkit.Coordinate(offsetLat, offsetLng);
 
@@ -1300,11 +1260,6 @@ function renderMarkers(
 
     // 霧はタップ不可（素通し）、円はタップ可（展開ズーム）
     annotation.enabled = isCluster && !isCloudZoom;
-    // ★2026-07-29：投稿フロー(applyAnnotationInteractivity)から復帰するとき
-    // に戻す「本来の値」。従来はここで設定しておらず、復帰時に霧まで
-    // enabled:true に戻っていた(＝霧がタップを吸収しうる状態・推定)。
-    // 差分更新でマーカーが長生きするようになるため、明示的に持たせる。
-    (annotation as any).__baseEnabled = isCluster && !isCloudZoom;
 
     if (isCluster && !isCloudZoom) {
       annotation.addEventListener("select", () => {
@@ -1324,17 +1279,11 @@ function renderMarkers(
         try { annotation.selected = false; } catch { /* noop */ }
       });
     }
-    next.set(key, annotation);
-    toAdd.push(annotation);
-  }
+    return annotation;
+  });
 
-  // 前回あって今回無いマーカー(markersRefに残った分)だけ削除し、
-  // 今回新しく必要になった分(toAdd)だけ追加する。
-  // 使い回したマーカーには一切触らないので、地図への操作量が最小になる。
-  const stale = Array.from(markersRef.current.values());
-  if (stale.length > 0) map.removeAnnotations(stale);
-  if (toAdd.length > 0) map.addAnnotations(toAdd);
-  markersRef.current = next;
+  map.addAnnotations(finalAnnotations);
+  markersRef.current = finalAnnotations;
 }
 
 const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
@@ -1358,8 +1307,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   const mapRef = useRef<any>(null);
   const reportMarkerRef = useRef<any>(null);
   const justPostedMarkerRef = useRef<any>(null);
-  // ★2026-07-29 差分更新化：配列 → Map(名札→マーカー) に変更
-  const markersRef = useRef<Map<string, any>>(new Map());
+  const markersRef = useRef<any[]>([]);
   const clusterIndexRef = useRef<Supercluster | null>(null);
   // 描き直しの入口（reports変更時などはこの参照を通して描き直す）
   const requestRenderRef = useRef<() => void>(() => {});
@@ -2240,14 +2188,6 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   // マーカーを画像版に描き直す（clusterIconCacheは上のuseEffectで既にクリア済み）
   useEffect(() => {
     if (!roachImageReady || !mapRef.current) return;
-    // ★2026-07-29 差分更新化に伴う注意★
-    // 絵文字→画像への描き直しは「見た目だけ」の変更で、差分更新の名札が
-    // 変わらない(＝そのまま使い回されて絵文字のまま残ってしまう)。
-    // ここだけは例外として、全マーカーを捨ててから描き直す。
-    if (markersRef.current.size > 0) {
-      mapRef.current.removeAnnotations(Array.from(markersRef.current.values()));
-      markersRef.current = new Map();
-    }
     renderMarkers(mapRef.current, markersRef, clusterIndexRef, mapContainerRef.current);
     applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
   }, [roachImageReady]);
@@ -2414,7 +2354,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         {
           draggable: false,
           calloutEnabled: true,
-          // ★2026-07-19:吹き出しを🪳の真上・中央に出す（以前の(-10.5,17)は
+          // ★2026-07-19：吹き出しを🪳の真上・中央に出す（以前の(-10.5,17)は
           //   横ズレの原因で、🪳がボタンの間に挟まって見えていた）
           calloutOffset: new DOMPoint(0, 12),
         }
@@ -2713,4 +2653,3 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 });
 
 export default AppleMap;
-
