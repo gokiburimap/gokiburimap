@@ -1985,7 +1985,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   const UI_EDGE = 12;
   const UI_ROW_H = 36;
   const UI_GAP = 8;
-  const UI_BOTTOM = 25; // page.tsx のGボタンの bottom と同じ値にしてある
+  const UI_BOTTOM = 30; // page.tsx のGボタンの bottom と同じ値にしてある
 
   const LEGEND_PC = { font: 15, swatch: 20, pad: "12px 20px", line: 2.0 };
   const LEGEND_SP = { font: 13, swatch: 16, pad: "10px 14px", line: 1.8 };

@@ -440,7 +440,7 @@ export default function Home() {
   <style>{`
     @keyframes pulse-ring {
       0% { transform: scale(0.95); opacity: 0.3; }
-      100% { transform: scale(1.5); opacity: 0; }
+      100% { transform: scale(1.35); opacity: 0; }
     }
   `}</style>
 
@@ -448,8 +448,8 @@ export default function Home() {
   <div
     style={{
       position: "absolute",
-      bottom: "25px",
-      right: "25px",
+      bottom: "30px",
+      right: "12px",
       display: "flex",
       alignItems: "center",
       gap: "10px",
