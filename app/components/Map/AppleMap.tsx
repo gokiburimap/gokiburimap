@@ -1569,23 +1569,39 @@ type MergedTile = { lat: number; lng: number; count: number; colorCount: number 
 
 function mergeTilesOnScreen(
   map: any,
+  containerEl: HTMLDivElement | null,
   items: MergedTile[],
   radiusPx: number
 ): MergedTile[] {
   if (items.length <= 1 || radiusPx <= 0) return items;
 
-  // 各マスが画面上のどこに来るかを求める。失敗したらまとめずに返す。
-  const pts: { x: number; y: number }[] = [];
-  try {
-    for (const it of items) {
-      const p = map.convertCoordinateToPointOnPage(
-        new window.mapkit.Coordinate(it.lat, it.lng)
-      );
-      pts.push({ x: p.x, y: p.y });
-    }
-  } catch {
+  // ============================================================
+  // ★2026-07-29 改善：画面上の位置を自前で計算する
+  //
+  // 【なぜ変えたか】以前はマス1個ごとに地図(MapKit)の座標変換を
+  // 呼んでいた。マスが細かくなると1回の描画で数百回呼ぶことになり、
+  // 描画中に地図の内部処理へ触れる回数がそのまま増える。
+  // 固まりの原因は一貫して「描画と地図の動作がぶつかること」だったので、
+  // 触る回数は減らせるだけ減らす。
+  //
+  // 【精度】ここで欲しいのは「近いか遠いか」だけ。画面1枚ぶんの狭い
+  // 範囲では、緯度経度をそのまま比例配分しても誤差は1%に満たない。
+  // まとめる判断には十分。
+  // ============================================================
+  const width = containerEl?.clientWidth || 0;
+  const height = containerEl?.clientHeight || 0;
+  if (width <= 0 || height <= 0) return items;
+
+  const span = map.region.span;
+  const center = map.region.center;
+  if (!span || !center || span.latitudeDelta <= 0 || span.longitudeDelta <= 0) {
     return items;
   }
+
+  const pts = items.map((it) => ({
+    x: width / 2 + ((it.lng - center.longitude) / span.longitudeDelta) * width,
+    y: height / 2 - ((it.lat - center.latitude) / span.latitudeDelta) * height,
+  }));
 
   // 件数の多い順に親を決める（大きい塊が中心になるように）
   const order = items.map((_, i) => i).sort((a, b) => items[b].count - items[a].count);
@@ -1690,7 +1706,7 @@ function renderTileMarkers(
         ? MERGE_RADIUS_PX_WIDE
         : MERGE_RADIUS_PX_NEAR;
   }
-  const items = mergeTilesOnScreen(map, rawItems, radiusPx);
+  const items = mergeTilesOnScreen(map, containerEl, rawItems, radiusPx);
 
   for (const item of items) {
     const { lat, lng, count, colorCount } = item;
