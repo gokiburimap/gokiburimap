@@ -1967,25 +1967,25 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   //   （top:12・高さ34px＝12〜46pxを占有）を置いたため、重なりを避けている。
   //   現在地ボタンの位置や大きさを変えたら、この値も見直すこと。
   // ============================================================
-  // 📐【画面まわりの余白・高さの調整はここ】(2026-07-30 統一)
+  // 📐【画面まわりの余白・高さの調整はここ】(2026-07-30 スマホ/PC分離)
   //
-  // それまで部品ごとにバラバラだった数値を、ここに集約した。
-  // ★ここを変えると、上段(絞り込み・検索・現在地)と下段(凡例)が
-  //   すべて揃って動く。個別にずらしたい場合だけ、下の各定数を触る。
+  // ★スマホとPCで別々に設定できる★
+  //   まずスマホ(UI_SP)を決め、あとからPC(UI_PC)を調整する運用。
+  //   片方を変えても、もう片方には影響しない。
   //
-  // ・UI_EDGE      … 画面の端からの距離。上下左右すべて共通。
-  //                  この1つの数字で「右上と右下の右端が揃う」。
-  // ・UI_ROW_H     … 上段の高さ。絞り込みボタン・検索バー・現在地
-  //                  ボタンの3つが必ずこの高さになる。
-  // ・UI_GAP       … 上段の部品どうしの間隔。
-  // ・UI_BOTTOM    … 下段(凡例)の下端からの距離。
-  //                  ★Gボタン(page.tsx の bottom)と同じ数字にすると
-  //                    下端が揃う。片方を変えたらもう片方も合わせること。
+  // ・edge      … 画面の端からの距離。上下左右すべて共通。
+  //               この1つの数字で「右上と右下の右端が揃う」。
+  // ・rowH      … 上段の高さ。絞り込み・検索バー・現在地の3つが
+  //               必ずこの高さ（＝丸ボタンの直径）になる。
+  // ・gap       … 上段の部品どうしの間隔。
+  // ・bottom    … 凡例の下端からの距離。
+  //               ★page.tsx のGボタンの bottom と同じ数字にすること★
+  // ・searchMax … 検索バーの最大幅(px)。PCで伸びすぎるのを防ぐ。
+  //               スマホは画面が狭いので大きめ＝実質無制限にしてある。
   // ============================================================
-  const UI_EDGE = 12;
-  const UI_ROW_H = 36;
-  const UI_GAP = 8;
-  const UI_BOTTOM = 30; // page.tsx のGボタンの bottom と同じ値にしてある
+  const UI_SP = { edge: 12, rowH: 36, gap: 8, bottom: 30, searchMax: 9999 };
+  const UI_PC = { edge: 12, rowH: 36, gap: 8, bottom: 30, searchMax: 420 };
+  const UI = isMobile ? UI_SP : UI_PC;
 
   const LEGEND_PC = { font: 15, swatch: 20, pad: "12px 20px", line: 2.0 };
   const LEGEND_SP = { font: 13, swatch: 16, pad: "10px 14px", line: 1.8 };
@@ -2012,8 +2012,8 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   //
   // ★2026-07-30：位置の個別指定を廃止した。
   //   絞り込み・検索バー・現在地の3つを、画面上部の1本の帯に
-  //   横並びで入れる方式に変えたため、位置と高さは上の UI_EDGE /
-  //   UI_ROW_H / UI_GAP が決める。ここを触る必要はもう無い。
+  //   横並びで入れる方式に変えたため、位置と高さは上の UI.edge /
+  //   UI.rowH / UI.gap が決める。ここを触る必要はもう無い。
   // ============================================================
 
   // 飛んだ先の縮尺。★数値を小さくするほど寄る★
@@ -3510,7 +3510,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       {/* ============================================================
           🔝 上段の帯（2026-07-30 統一）
           絞り込み・住所検索・現在地の3つを、同じ高さで横一列に並べる。
-          ・端からの距離は UI_EDGE、高さは UI_ROW_H、間隔は UI_GAP。
+          ・端からの距離は UI.edge、高さは UI.rowH、間隔は UI.gap。
             この3つを変えれば全体が揃って動く。
           ・検索バーは残り幅いっぱいに伸びる（SearchBar.tsx 側で flex:1）。
           ・投稿の流れに入っている間は、帯ごと隠す。
@@ -3519,13 +3519,13 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         <div
           style={{
             position: "absolute",
-            top: UI_EDGE,
-            left: UI_EDGE,
-            right: UI_EDGE,
-            height: UI_ROW_H,
+            top: UI.edge,
+            left: UI.edge,
+            right: UI.edge,
+            height: UI.rowH,
             display: "flex",
             alignItems: "center",
-            gap: UI_GAP,
+            gap: UI.gap,
             zIndex: 1000,
           }}
         >
@@ -3541,22 +3541,28 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
                 style={{
                   display: "flex",
                   alignItems: "center",
+                  justifyContent: "center",
                   gap: 6,
-                  height: UI_ROW_H,
+                  height: UI.rowH,
+                  // ★全期間（初期状態）のときは、現在地ボタンと同じ
+                  //   ぴったりの丸にする。両端に同じ大きさの丸が並ぶ。
+                  //   期間を絞っているときだけ、横に伸びて文字が出る。
+                  ...(period === "all"
+                    ? { width: UI.rowH, padding: 0 }
+                    : { padding: "0 14px" }),
                   background: "#ffffff",
                   border: "none",
-                  borderRadius: UI_ROW_H / 2,
+                  borderRadius: UI.rowH / 2,
                   boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
-                  padding: isMobile ? `0 ${UI_ROW_H / 2 - 8}px` : "0 14px",
                   cursor: "pointer",
                   fontSize: 13,
                   fontWeight: 600,
-                  color: period === "all" ? "#292524" : "#662510",
+                  color: "#292524",
                   lineHeight: 1,
                 }}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-                  stroke={period === "all" ? "#888" : "#662510"} strokeWidth="2"
+                  stroke="#888" strokeWidth="2"
                   strokeLinecap="round" style={{ display: "block", flexShrink: 0 }}>
                   {/* 設定つまみ（スライダー）の形 */}
                   <line x1="3" y1="6" x2="21" y2="6" />
@@ -3566,14 +3572,10 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
                   <circle cx="15" cy="12" r="2.5" fill="#fff" />
                   <circle cx="10" cy="18" r="2.5" fill="#fff" />
                 </svg>
-                {/* スマホでは文字を出さない（ご指定）。絞り込み中だけ点を出す */}
-                {!isMobile && <span>{PERIOD_LABELS[period]}</span>}
-                {isMobile && period !== "all" && (
-                  <span style={{
-                    width: 6, height: 6, borderRadius: "50%",
-                    background: "#662510", display: "block",
-                  }} />
-                )}
+                {/* ★初期状態（全期間）では文字を出さない。書かなくても
+                    分かるものを書くと、両端の丸の対称が崩れるため。
+                    スマホ・PCとも同じ規則にしてある。 */}
+                {period !== "all" && <span>{PERIOD_LABELS[period]}</span>}
               </button>
 
               {/* 開いたパネル。帯の下に出る */}
@@ -3581,7 +3583,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
                 <div
                   style={{
                     position: "absolute",
-                    top: UI_ROW_H + UI_GAP,
+                    top: UI.rowH + UI.gap,
                     left: 0,
                     background: "#ffffff",
                     borderRadius: 12,
@@ -3634,10 +3636,20 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
                     })}
                   </div>
 
-                  {/* 選んだ結果を日付で示す。毎月1日に自動で切り替わる */}
+                  {/* 選んだ結果を日付で示す。選択肢の箱と同じ幅・同じ
+                      左右余白にして、中央に置く。毎月1日に自動で変わる。
+                      ★薄すぎたので色を濃くした（#78716C → #57534E）★ */}
                   <div style={{
-                    marginTop: 8, fontSize: 11, color: "#78716C",
-                    lineHeight: 1.5, whiteSpace: "nowrap",
+                    marginTop: 8,
+                    padding: "6px 12px",
+                    background: "#F5F5F4",
+                    borderRadius: 8,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: "#57534E",
+                    lineHeight: 1.4,
+                    textAlign: "center",
+                    whiteSpace: "nowrap",
                   }}>
                     {periodFrom ? `${periodFrom.replace(/-/g, "/")}〜現在` : "すべての投稿"}
                   </div>
@@ -3646,8 +3658,19 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
             </div>
           )}
 
-          {/* 🔍 住所検索バー。残り幅いっぱいに伸びる */}
-          <SearchBar onSearch={handleSearch} height={UI_ROW_H} />
+          {/* 🔍 住所検索バー。
+              PCでは伸びすぎるので UI.searchMax で上限をつけ、
+              左右のボタンの間で中央に置く。スマホは上限を実質無しに
+              してあるので、今まで通り幅いっぱいに広がる。 */}
+          <div style={{
+            flex: 1, minWidth: 0, display: "flex", justifyContent: "center",
+          }}>
+            <SearchBar
+              onSearch={handleSearch}
+              height={UI.rowH}
+              maxWidth={UI.searchMax}
+            />
+          </div>
 
           {/* 📍 現在地ボタン */}
           <button
@@ -3657,8 +3680,8 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
             title="現在地を表示"
             style={{
               flexShrink: 0,
-              width: UI_ROW_H,
-              height: UI_ROW_H,
+              width: UI.rowH,
+              height: UI.rowH,
               borderRadius: "50%",
               background: "#ffffff",
               border: "none",
@@ -3715,13 +3738,11 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       <div
         style={{
           position: "absolute",
-          // ★2026-07-30：位置を UI_EDGE / UI_BOTTOM に統一。
-          //   スマホ＝左下、PC＝右上（上段の帯の下）。
-          //   スマホの下端は page.tsx のGボタンと同じ UI_BOTTOM なので、
-          //   凡例とGボタンの下端がぴったり揃う。
-          ...(isMobile
-            ? { bottom: UI_BOTTOM, left: UI_EDGE }
-            : { top: UI_EDGE + UI_ROW_H + UI_GAP, right: UI_EDGE }),
+          // ★2026-07-30：PC・スマホとも左下に統一。
+          //   下端は page.tsx のGボタンと同じ UI.bottom なので揃う。
+          //   左右の端は UI.edge なので、他の部品とも揃う。
+          bottom: UI.bottom,
+          left: UI.edge,
           background: "white",
           borderRadius: 8,
           padding: isMobile ? LEGEND_SP.pad : LEGEND_PC.pad,
@@ -3733,13 +3754,23 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
           userSelect: "none",
         }}
       >
+        {/* ★2026-07-30：見出しの行ぜんぶを押せるようにした。
+            以前は小さな▼だけが当たり判定で、押しにくく反応も悪かった。
+            上下に余白(padding)を入れて指が当たる面積も広げてある。
+            ★押しにくいと感じたら padding の 6px を大きくする★ */}
         <div
+          onClick={() => setLegendCollapsed((v) => !v)}
+          role="button"
+          aria-label={legendCollapsed ? "凡例を開く" : "凡例を閉じる"}
           style={{
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
             gap: 8,
             marginBottom: legendCollapsed ? 0 : 4,
+            padding: "6px 0",
+            margin: "-6px 0",
+            cursor: "pointer",
           }}
         >
           <span
@@ -3751,22 +3782,17 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
           >
             目撃件数
           </span>
-          <button
-            type="button"
-            onClick={() => setLegendCollapsed((v) => !v)}
+          {/* 矢印は目印だけ。押す判定は上の行ぜんぶが持っている */}
+          <span
             style={{
-              border: "none",
-              background: "transparent",
-              cursor: "pointer",
-              fontSize: isMobile ? LEGEND_SP.font : LEGEND_PC.font,
+              fontSize: (isMobile ? LEGEND_SP.font : LEGEND_PC.font) + 3,
               color: "#78716C",
-              padding: 0,
               lineHeight: 1,
+              flexShrink: 0,
             }}
-            aria-label={legendCollapsed ? "凡例を開く" : "凡例を閉じる"}
           >
             {legendCollapsed ? "▸" : "▾"}
-          </button>
+          </span>
         </div>
 
         {!legendCollapsed &&

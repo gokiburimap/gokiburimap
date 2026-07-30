@@ -25,9 +25,11 @@ interface SearchBarProps {
   onSearch: (lat: number, lng: number, boundingBox?: [string, string, string, string]) => void;
   /** 上段の帯の高さ。親から渡される（省略時は36px） */
   height?: number;
+  /** 最大幅(px)。PCで伸びすぎるのを防ぐ。親(AppleMap.tsx)のUI.searchMaxが渡る */
+  maxWidth?: number;
 }
 
-export default function SearchBar({ onSearch, height = 36 }: SearchBarProps) {
+export default function SearchBar({ onSearch, height = 36, maxWidth = 9999 }: SearchBarProps) {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -57,9 +59,10 @@ export default function SearchBar({ onSearch, height = 36 }: SearchBarProps) {
   return (
     <div
       style={{
-        // 残り幅いっぱいに伸びる。minWidth:0 が無いと、中の入力欄が
-        // 縮まずに帯からはみ出すので必ず付けること。
-        flex: 1,
+        // 親が用意した枠いっぱいに広がり、maxWidth で頭打ちになる。
+        // minWidth:0 が無いと、中の入力欄が縮まずに帯からはみ出すので必須。
+        width: "100%",
+        maxWidth,
         minWidth: 0,
         height,
         display: "flex",
