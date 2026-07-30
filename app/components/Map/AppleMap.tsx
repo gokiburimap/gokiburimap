@@ -129,7 +129,7 @@ const MAX_CLUSTER_FONT_SIZE_PX = 18;
 //   100→80に下げた。さらに小さくしたい場合はこの数字を下げる。
 //   （ズームインすると、この上限に張り付いた大きさで頭打ちになる）
 // ============================================================
-const MAX_CIRCLE_DISPLAY_SIZE_PX = 60;
+const MAX_CIRCLE_DISPLAY_SIZE_PX = 80;
 
 // ============================================================
 // ☁️【霧の「件数による伸び分」の上限はここ】
@@ -157,7 +157,7 @@ const MAX_CLOUD_DISPLAY_SIZE_PX = 220;
 // 通常は発動しない。動作が重いと感じたときだけ下げること。
 // ★これを下げすぎると、また最低保証半径が潰れてしまうので注意★
 // ============================================================
-const HARD_MAX_CLOUD_PX = 500;
+const HARD_MAX_CLOUD_PX = 700;
 
 // ============================================================
 // 🎨 目撃件数による色分け（2026-07-16新規実装）
@@ -1868,21 +1868,29 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   const [reports, setReports] = useState<Report[]>([]);
 
   // ============================================================
-  // 🧱 新方式（タイル集計）の切り替え（2026-07-29 段階4）
+  // 🧱 表示方式の切り替え（2026-07-30 既定を新方式に変更）
   //
-  // URLに ?mode=tile を付けたときだけ新方式で描画する。
-  // 付けていない一般の訪問者は、今まで通り旧方式（全件取得＋
-  // supercluster）のまま。新方式が壊れても訪問者には何も起きない。
+  // 【変更前】?mode=tile を付けたときだけ新方式（試験運用）
+  // 【変更後】既定が新方式。?mode=legacy を付けたときだけ旧方式
   //
-  // 【使い方】
-  //   通常   … https://（サイト）/
-  //   新方式 … https://（サイト）/?mode=tile
-  //   管理者ピンも同時に見たい場合 … /?mode=tile&admin
+  // 公開前で訪問者がいないため、この時点で切り替えた。
+  // 何か起きたら ?mode=legacy を付ければ、その場で旧方式に戻せる。
   //
-  // 【この値は起動時に1回だけ決まる】
-  // 途中で切り替わらないので、地図の初期化処理の中で安心して使える。
+  // ★旧方式のコード（renderMarkers・supercluster・全件取得）は、
+  //   新方式で一定期間運用して問題が出ないと確認できたら削除すること。
+  //   700行以上が消え、このファイルはかなり読みやすくなる。
   // ============================================================
   const [tileMode] = useState(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      return new URLSearchParams(window.location.search).get("mode") !== "legacy";
+    } catch {
+      return true;
+    }
+  });
+  // 開発用バッジ（?mode=tile を明示したときだけ出す）。
+  // 既定が新方式になったので、普段の画面には出さない。
+  const [tileDebug] = useState(() => {
     if (typeof window === "undefined") return false;
     try {
       return new URLSearchParams(window.location.search).get("mode") === "tile";
@@ -1890,8 +1898,54 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       return false;
     }
   });
-  // 新方式の状態表示（右下のバッジに出す）。取得に失敗したら理由を出す。
+  // 新方式の状態表示（バッジに出す）。取得に失敗したら理由を出す。
   const [tileStatus, setTileStatus] = useState<string>("");
+
+  // ============================================================
+  // 🗓 期間フィルター（2026-07-30 段階3）
+  //
+  // 集計は月ごとに持っているので、絞り込みは「この月以降を数える」
+  // という形になる。1日単位ではなく月単位。
+  //
+  // ・過去3か月 … 今月を含めて3か月（7月なら5/1以降）
+  // ・過去1年   … 今月を含めて12か月（7月なら前年8/1以降）
+  //
+  // 月初だと実際の期間が短めになるが、それを隠さずに
+  // 「2026/05/01〜現在」と画面に出すことで、誤解を防いでいる。
+  //
+  // ★期間を絞ると、色（件数による色分け）も同じ期間で計算し直される。
+  //   3か月で絞れば3か月ぶんの件数に応じた色になる。SQL側で対応済み。
+  // ============================================================
+  type PeriodMode = "all" | "1y" | "3m";
+  const [period, setPeriod] = useState<PeriodMode>("all");
+  const [filterOpen, setFilterOpen] = useState(false);
+
+  // ★選択肢の文言はここ。変えたいときはこの3つだけ直せばよい。
+  const PERIOD_LABELS: Record<PeriodMode, string> = {
+    all: "全期間",
+    "1y": "過去1年",
+    "3m": "過去3か月",
+  };
+
+  // ★絞り込みボタンの位置はここ。左上に置いている。
+  //   住所検索バーの下に来るよう top を取ってあるので、検索バーの
+  //   大きさを変えたらこの値も見直すこと。
+  const FILTER_PC = { top: 58, left: 10 };
+  const FILTER_SP = { top: 54, left: 10 };
+
+  // 絞り込みの開始月（その月の1日）。全期間ならnull。
+  const periodFrom = (() => {
+    if (period === "all") return null;
+    const now = new Date();
+    const back = period === "1y" ? 11 : 2;
+    const start = new Date(now.getFullYear(), now.getMonth() - back, 1);
+    const y = start.getFullYear();
+    const m = String(start.getMonth() + 1).padStart(2, "0");
+    return `${y}-${m}-01`;
+  })();
+  // 描画処理（地図の初期化時に作られる）から参照できるようにしておく
+  const periodFromRef = useRef<string | null>(null);
+  periodFromRef.current = periodFrom;
 
   // ============================================================
   // 📱 スマホ判定（2026-07-19 追加）
@@ -2636,12 +2690,12 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         const isCloudZoom = currentZoom >= CLOUD_ZOOM_THRESHOLD;
         const tileZ = calcTileZoom(map, mapContainerRef.current, isCloudZoom);
 
-        // 期間フィルターは段階3で実装する。今は常に全期間（null）。
+        // 期間フィルター（段階3）。全期間ならnullが渡る。
         const { rows, error } = await fetchTiles(
           map,
           mapContainerRef.current,
           tileZ,
-          null,
+          periodFromRef.current,
           isCloudZoom ? TILE_VIEWPORT_RATIO_FOG : TILE_VIEWPORT_RATIO_ICON
         );
 
@@ -3045,6 +3099,12 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     renderMarkers(mapRef.current, markersRef, clusterIndexRef, mapContainerRef.current);
     applyAnnotationInteractivity(markersRef, isSelectingRef, reportPosRef);
   }, [reports]);
+
+  // 🗓 期間を切り替えたら、その範囲で集計を取り直して描き直す
+  useEffect(() => {
+    if (tileMode) requestRenderRef.current();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [period]);
 
   // isSelecting・reportPosが変化した瞬間にも、既存の霧アノテーションの
   // タップ吸収状態を即座に切り替える（renderMarkersの再実行を待たない）
@@ -3597,6 +3657,143 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
           ))}
       </div>
 
+      {/* ============================================================
+          🗓 期間フィルター（2026-07-30 段階3）
+          左上に配置。閉じているときは、PC=アイコン＋文字／スマホ=アイコンのみ。
+          ★位置を調整したいときは下の FILTER_PC / FILTER_SP を変える。
+            住所検索バーの下に来るよう top を取ってあるが、検索バーの
+            大きさを変えたらここも見直すこと。
+          ★投稿の流れに入っている間は、他のボタンと同じく非表示にする。
+         ============================================================ */}
+      {tileMode && !inReportFlow && (
+        <div
+          style={{
+            position: "absolute",
+            ...(isMobile
+              ? { top: FILTER_SP.top, left: FILTER_SP.left }
+              : { top: FILTER_PC.top, left: FILTER_PC.left }),
+            zIndex: 1000,
+            userSelect: "none",
+            WebkitUserSelect: "none",
+          } as React.CSSProperties}
+        >
+          {!filterOpen ? (
+            <button
+              type="button"
+              onClick={() => setFilterOpen(true)}
+              aria-label="期間で絞り込む"
+              title="期間で絞り込む"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                background: "#ffffff",
+                border: "none",
+                borderRadius: 8,
+                boxShadow: "0 2px 10px rgba(0,0,0,0.15)",
+                padding: isMobile ? "8px" : "8px 12px",
+                cursor: "pointer",
+                fontSize: 13,
+                fontWeight: 600,
+                color: period === "all" ? "#292524" : "#662510",
+                lineHeight: 1,
+              }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+                stroke={period === "all" ? "#888" : "#662510"} strokeWidth="2"
+                strokeLinecap="round" strokeLinejoin="round" style={{ display: "block" }}>
+                <path d="M3 4h18l-7 8v6l-4 2v-8z" />
+              </svg>
+              {/* スマホでは文字を出さない（ご指定） */}
+              {!isMobile && <span>{PERIOD_LABELS[period]}</span>}
+              {/* 絞り込み中は、スマホでも分かるよう小さな点を出す */}
+              {isMobile && period !== "all" && (
+                <span
+                  style={{
+                    width: 6, height: 6, borderRadius: "50%",
+                    background: "#662510", display: "block",
+                  }}
+                />
+              )}
+            </button>
+          ) : (
+            <div
+              style={{
+                background: "#ffffff",
+                borderRadius: 12,
+                boxShadow: "0 4px 16px rgba(0,0,0,0.18)",
+                padding: "12px 14px",
+                minWidth: 168,
+              }}
+            >
+              {/* 見出し＋閉じる */}
+              <div
+                style={{
+                  display: "flex", alignItems: "center",
+                  justifyContent: "space-between", gap: 10, marginBottom: 8,
+                }}
+              >
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#78716C" }}>
+                  期間
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setFilterOpen(false)}
+                  aria-label="閉じる"
+                  style={{
+                    border: "none", background: "transparent", cursor: "pointer",
+                    color: "#78716C", fontSize: 16, lineHeight: 1, padding: 0,
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+
+              {/* 3つの選択肢。選ぶ言葉は短く保つ */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {(["all", "1y", "3m"] as PeriodMode[]).map((m) => {
+                  const active = period === m;
+                  return (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setPeriod(m)}
+                      style={{
+                        textAlign: "left",
+                        background: active ? "#662510" : "transparent",
+                        color: active ? "#FFFFFF" : "#292524",
+                        border: active ? "none" : "1px solid #E7E5E4",
+                        borderRadius: 8,
+                        padding: "8px 12px",
+                        cursor: "pointer",
+                        fontSize: 13,
+                        fontWeight: 600,
+                        lineHeight: 1.2,
+                      }}
+                    >
+                      {PERIOD_LABELS[m]}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* 選んだ結果を日付で示す。月単位の集計なので、実際の開始日を
+                  隠さずに出す。毎月1日に自動で切り替わる。 */}
+              <div
+                style={{
+                  marginTop: 8, fontSize: 11, color: "#78716C",
+                  lineHeight: 1.5, whiteSpace: "nowrap",
+                }}
+              >
+                {periodFrom
+                  ? `${periodFrom.replace(/-/g, "/")}〜現在`
+                  : "すべての投稿"}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div ref={mapContainerRef} style={{ width: "100%", height: "100%" }} />
 
       {/* ============================================================
@@ -3606,7 +3803,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
           （TILE_TARGET_PX）ときの手掛かりになる。
           ★新方式が正式採用になったら、このバッジごと削除すること★
          ============================================================ */}
-      {tileMode && (
+      {tileDebug && (
         <div
           style={{
             position: "absolute",
