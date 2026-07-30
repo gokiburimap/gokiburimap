@@ -3665,6 +3665,16 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
             大きさを変えたらここも見直すこと。
           ★投稿の流れに入っている間は、他のボタンと同じく非表示にする。
          ============================================================ */}
+      {/* 絞り込みが開いている間、画面全体に透明な受け皿を置く。
+          どこを触っても閉じる。地図には触らないので、閉じるつもりの
+          タップで地図が動いてしまうこともない。 */}
+      {tileMode && !inReportFlow && filterOpen && (
+        <div
+          onClick={() => setFilterOpen(false)}
+          style={{ position: "absolute", inset: 0, zIndex: 999 }}
+        />
+      )}
+
       {tileMode && !inReportFlow && (
         <div
           style={{
@@ -3699,10 +3709,17 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
                 lineHeight: 1,
               }}
             >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
                 stroke={period === "all" ? "#888" : "#662510"} strokeWidth="2"
-                strokeLinecap="round" strokeLinejoin="round" style={{ display: "block" }}>
-                <path d="M3 4h18l-7 8v6l-4 2v-8z" />
+                strokeLinecap="round" style={{ display: "block" }}>
+                {/* 設定つまみ（スライダー）の形。三本の線に、それぞれ
+                    位置の違うつまみを乗せた、一般的な絞り込みの記号。 */}
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <line x1="3" y1="12" x2="21" y2="12" />
+                <line x1="3" y1="18" x2="21" y2="18" />
+                <circle cx="8" cy="6" r="2.5" fill="#fff" />
+                <circle cx="15" cy="12" r="2.5" fill="#fff" />
+                <circle cx="10" cy="18" r="2.5" fill="#fff" />
               </svg>
               {/* スマホでは文字を出さない（ご指定） */}
               {!isMobile && <span>{PERIOD_LABELS[period]}</span>}
