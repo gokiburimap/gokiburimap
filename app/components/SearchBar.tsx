@@ -2,35 +2,34 @@
 import { useState } from "react";
 
 // ============================================================
-// 🔍【住所検索バーの位置・大きさはここ】(2026-07-27 整理)
+// 🔍 住所検索バー（2026-07-30 上段の帯に組み込み）
 //
-// PCとスマホで別々に指定できるようにしてある。
-// 数値を書き換えるだけで、位置と幅が変わる。
+// ★位置と高さは、この中では決めていない★
+//   AppleMap.tsx の上段の帯（UI_EDGE / UI_ROW_H / UI_GAP）が
+//   位置も高さも決める。ここは「残り幅いっぱいに伸びる部品」として
+//   振る舞うだけ。
+//   ＝ 絞り込みボタン・現在地ボタンと必ず同じ高さ・同じ上端になる。
 //
-// ・top      … 地図の上端からの距離(px)。小さくすると上に寄る
-// ・width    … 画面幅に対する割合。小さくすると細くなる
-// ・maxWidth … 広い画面での上限幅(px)。PCでの見た目はこれで決まる
+// 【以前との違い】
+//   以前はこのファイルが自分で position:absolute / top / width を
+//   持っていたため、他のボタンと高さや余白が揃わなかった。
+//   その指定を全て捨て、並べる責任を親（AppleMap.tsx）に一本化した。
 //
-// ★スマホは、右上の現在地ボタンと重ならない幅にしておくこと。
-//   画面幅390pxの端末で、66%＝約257px。左右に約66pxずつ余るので、
-//   40pxのボタンが右端に入っても当たらない。
+// 【調整したいとき】
+//   ・高さ・上端・左右の余白 → AppleMap.tsx の UI_* を変える
+//   ・文字サイズ・角の丸み   → 下の FONT_SIZE / 角丸を変える
 // ============================================================
-const SEARCH_PC = { top: 12, width: "70%", maxWidth: 360 };
-const SEARCH_SP = { top: 8, width: "66%", maxWidth: 320 };
+const FONT_SIZE = 14;
 
 interface SearchBarProps {
   onSearch: (lat: number, lng: number, boundingBox?: [string, string, string, string]) => void;
+  /** 上段の帯の高さ。親から渡される（省略時は36px） */
+  height?: number;
 }
 
-export default function SearchBar({ onSearch }: SearchBarProps) {
+export default function SearchBar({ onSearch, height = 36 }: SearchBarProps) {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
-
-  // 画面幅768px未満をスマホ扱い（AppleMap.tsx の isMobile と同じ基準）
-  const [isMobile] = useState(
-    () => typeof window !== "undefined" && window.innerWidth < 768
-  );
-  const layout = isMobile ? SEARCH_SP : SEARCH_PC;
 
   const handleSearch = async () => {
     if (!query) return;
@@ -58,18 +57,16 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
   return (
     <div
       style={{
-        position: "absolute",
-        top: `${layout.top}px`,
-        left: "50%",
-        transform: "translateX(-50%)",
-        zIndex: 1000,
+        // 残り幅いっぱいに伸びる。minWidth:0 が無いと、中の入力欄が
+        // 縮まずに帯からはみ出すので必ず付けること。
+        flex: 1,
+        minWidth: 0,
+        height,
         display: "flex",
         alignItems: "center",
-        width: layout.width,
-        maxWidth: `${layout.maxWidth}px`,
         background: "white",
-        borderRadius: "24px",
-        padding: "8px 14px",
+        borderRadius: height / 2,
+        padding: "0 14px",
         boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
         gap: "8px",
         // 検索中はうっすら薄くして、処理中であることを伝える
@@ -100,7 +97,7 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
           minWidth: 0,
           border: "none",
           outline: "none",
-          fontSize: "14px",
+          fontSize: `${FONT_SIZE}px`,
           background: "transparent",
           color: "#333",
         }}

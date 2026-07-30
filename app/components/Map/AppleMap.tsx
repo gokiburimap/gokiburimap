@@ -1966,8 +1966,31 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   // ★2026-07-27：PCの top を 50→58 に変更。右上に現在地ボタン
   //   （top:12・高さ34px＝12〜46pxを占有）を置いたため、重なりを避けている。
   //   現在地ボタンの位置や大きさを変えたら、この値も見直すこと。
-  const LEGEND_PC = { top: 58, right: 10, font: 15, swatch: 20, pad: "12px 20px", line: 2.0 };
-  const LEGEND_SP = { bottom: 36, left: 10, font: 13, swatch: 16, pad: "10px 14px", line: 1.8 };
+  // ============================================================
+  // 📐【画面まわりの余白・高さの調整はここ】(2026-07-30 統一)
+  //
+  // それまで部品ごとにバラバラだった数値を、ここに集約した。
+  // ★ここを変えると、上段(絞り込み・検索・現在地)と下段(凡例)が
+  //   すべて揃って動く。個別にずらしたい場合だけ、下の各定数を触る。
+  //
+  // ・UI_EDGE      … 画面の端からの距離。上下左右すべて共通。
+  //                  この1つの数字で「右上と右下の右端が揃う」。
+  // ・UI_ROW_H     … 上段の高さ。絞り込みボタン・検索バー・現在地
+  //                  ボタンの3つが必ずこの高さになる。
+  // ・UI_GAP       … 上段の部品どうしの間隔。
+  // ・UI_BOTTOM    … 下段(凡例)の下端からの距離。
+  //                  ★Gボタン(page.tsx の bottom)と同じ数字にすると
+  //                    下端が揃う。片方を変えたらもう片方も合わせること。
+  // ============================================================
+  const UI_EDGE = 12;
+  const UI_ROW_H = 36;
+  const UI_GAP = 8;
+  const UI_BOTTOM = 25; // page.tsx のGボタンの bottom と同じ値にしてある
+
+  const LEGEND_PC = { font: 15, swatch: 20, pad: "12px 20px", line: 2.0 };
+  const LEGEND_SP = { font: 13, swatch: 16, pad: "10px 14px", line: 1.8 };
+  // ★凡例を最初から閉じた状態にしたいときは、ここを true にする。
+  //   （投稿が増えて画面が賑やかになったら閉じる想定。今は開いたまま）
   const [legendCollapsed, setLegendCollapsed] = useState(false);
 
   // ============================================================
@@ -1987,24 +2010,11 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   //   ただし投稿時の縮尺では標準の青い点もほぼ見えていなかったため、
   //   実用上の損失は無いと判断した。
   //
-  // ★位置を変えたいときは、下の LOCATE_PC / LOCATE_SP を変える。
-  //   PC・スマホとも右上。住所検索バーと高さが揃うように top を
-  //   SearchBar.tsx の SEARCH_PC / SEARCH_SP の top と合わせてある。
-  //   ★片方を動かしたら、もう片方も合わせること。
+  // ★2026-07-30：位置の個別指定を廃止した。
+  //   絞り込み・検索バー・現在地の3つを、画面上部の1本の帯に
+  //   横並びで入れる方式に変えたため、位置と高さは上の UI_EDGE /
+  //   UI_ROW_H / UI_GAP が決める。ここを触る必要はもう無い。
   // ============================================================
-  const LOCATE_PC = { top: 12, right: 10 };
-  // ★2026-07-27：スマホは 8→10 に変更。検索バーの実際の高さが計算値より
-  //   わずかに大きく、topを同じにすると円のほうが上に浮いて見えたため。
-  //   ★それでもずれて見える場合は、この top ではなく LOCATE_SIZE を
-  //     大きくして高さを合わせるほうが、上端・下端とも揃ってきれいになる。
-  const LOCATE_SP = { top: 10, right: 12 };
-
-  // ボタンの直径(px)。
-  // ★住所検索バーの高さと同じ値にすること★
-  //   検索バーの高さ ＝ 上下パディング8px×2 ＋ 中身18px ＝ 34px。
-  //   top を揃えたうえで高さも同じにすると、上端も下端もぴったり並ぶ。
-  //   検索バーのパディングや文字サイズを変えたら、この値も見直すこと。
-  const LOCATE_SIZE = 34;
 
   // 飛んだ先の縮尺。★数値を小さくするほど寄る★
   //   0.002  … 約220m四方
@@ -3497,64 +3507,181 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
-      {/* ★2026-07-29：投稿の流れに入っている間は検索バーを出さない。
-          検索すると地図が飛び、位置調整ピンや確認画面が画面外に
-          取り残されるため（現在地ボタンと同じ理由。inReportFlow を参照）。 */}
-      {!inReportFlow && <SearchBar onSearch={handleSearch} />}
-
       {/* ============================================================
-          📍 現在地ボタン（2026-07-27 追加）
-          PC・スマホとも右上。住所検索バーと高さを揃えてある。
-          位置は上の LOCATE_PC / LOCATE_SP、大きさは LOCATE_SIZE で調整する。
-          ★2026-07-29：投稿の流れに入っている間は表示しない
-            （理由は上の inReportFlow のコメントを参照）
+          🔝 上段の帯（2026-07-30 統一）
+          絞り込み・住所検索・現在地の3つを、同じ高さで横一列に並べる。
+          ・端からの距離は UI_EDGE、高さは UI_ROW_H、間隔は UI_GAP。
+            この3つを変えれば全体が揃って動く。
+          ・検索バーは残り幅いっぱいに伸びる（SearchBar.tsx 側で flex:1）。
+          ・投稿の流れに入っている間は、帯ごと隠す。
          ============================================================ */}
       {!inReportFlow && (
-      <button
-        type="button"
-        onClick={handleLocate}
-        aria-label="現在地を表示"
-        title="現在地を表示"
-        style={{
-          position: "absolute",
-          ...(isMobile
-            ? { top: LOCATE_SP.top, right: LOCATE_SP.right }
-            : { top: LOCATE_PC.top, right: LOCATE_PC.right }),
-          width: LOCATE_SIZE,
-          height: LOCATE_SIZE,
-          borderRadius: "50%",
-          background: "#ffffff",
-          border: "none",
-          boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          cursor: "pointer",
-          padding: 0,
-          zIndex: 1000,
-          opacity: locating ? 0.6 : 1,
-        }}
-      >
-        {/* 地図アプリで一般的な「現在地」の矢印。ベタ塗りは悪目立ちするため
-            線画にしてある。
-            ★色は SearchBar.tsx の虫眼鏡アイコンと同じ "#888" に揃えてある。
-              片方を変えたら、もう片方も合わせること。
-            ★円に対して大きい／小さいと感じたら、width と height を変える
-              （ボタンの直径 LOCATE_SIZE=34px に対して現在16px）。 */}
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="#888"
-          strokeWidth="2"
-          strokeLinejoin="round"
-          strokeLinecap="round"
-          style={{ display: "block" }}
+        <div
+          style={{
+            position: "absolute",
+            top: UI_EDGE,
+            left: UI_EDGE,
+            right: UI_EDGE,
+            height: UI_ROW_H,
+            display: "flex",
+            alignItems: "center",
+            gap: UI_GAP,
+            zIndex: 1000,
+          }}
         >
-          <path d="M21 3L3 10.53v.98l6.84 2.65L12.48 21h.98L21 3z" />
-        </svg>
-      </button>
+          {/* 🗓 期間フィルター。パネルはこの帯の下に開くので、
+              検索バーとぶつからない。 */}
+          {tileMode && (
+            <div style={{ position: "relative", flexShrink: 0 }}>
+              <button
+                type="button"
+                onClick={() => setFilterOpen((v) => !v)}
+                aria-label="期間で絞り込む"
+                title="期間で絞り込む"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  height: UI_ROW_H,
+                  background: "#ffffff",
+                  border: "none",
+                  borderRadius: UI_ROW_H / 2,
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
+                  padding: isMobile ? `0 ${UI_ROW_H / 2 - 8}px` : "0 14px",
+                  cursor: "pointer",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: period === "all" ? "#292524" : "#662510",
+                  lineHeight: 1,
+                }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                  stroke={period === "all" ? "#888" : "#662510"} strokeWidth="2"
+                  strokeLinecap="round" style={{ display: "block", flexShrink: 0 }}>
+                  {/* 設定つまみ（スライダー）の形 */}
+                  <line x1="3" y1="6" x2="21" y2="6" />
+                  <line x1="3" y1="12" x2="21" y2="12" />
+                  <line x1="3" y1="18" x2="21" y2="18" />
+                  <circle cx="8" cy="6" r="2.5" fill="#fff" />
+                  <circle cx="15" cy="12" r="2.5" fill="#fff" />
+                  <circle cx="10" cy="18" r="2.5" fill="#fff" />
+                </svg>
+                {/* スマホでは文字を出さない（ご指定）。絞り込み中だけ点を出す */}
+                {!isMobile && <span>{PERIOD_LABELS[period]}</span>}
+                {isMobile && period !== "all" && (
+                  <span style={{
+                    width: 6, height: 6, borderRadius: "50%",
+                    background: "#662510", display: "block",
+                  }} />
+                )}
+              </button>
+
+              {/* 開いたパネル。帯の下に出る */}
+              {filterOpen && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: UI_ROW_H + UI_GAP,
+                    left: 0,
+                    background: "#ffffff",
+                    borderRadius: 12,
+                    boxShadow: "0 4px 16px rgba(0,0,0,0.18)",
+                    padding: "12px 14px",
+                    minWidth: 168,
+                    zIndex: 1001,
+                  }}
+                >
+                  <div style={{
+                    display: "flex", alignItems: "center",
+                    justifyContent: "space-between", gap: 10, marginBottom: 8,
+                  }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#78716C" }}>期間</span>
+                    <button
+                      type="button"
+                      onClick={() => setFilterOpen(false)}
+                      aria-label="閉じる"
+                      style={{
+                        border: "none", background: "transparent", cursor: "pointer",
+                        color: "#78716C", fontSize: 16, lineHeight: 1, padding: 0,
+                      }}
+                    >×</button>
+                  </div>
+
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    {(["all", "1y", "3m"] as PeriodMode[]).map((m) => {
+                      const active = period === m;
+                      return (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => setPeriod(m)}
+                          style={{
+                            textAlign: "left",
+                            background: active ? "#662510" : "transparent",
+                            color: active ? "#FFFFFF" : "#292524",
+                            border: active ? "none" : "1px solid #E7E5E4",
+                            borderRadius: 8,
+                            padding: "8px 12px",
+                            cursor: "pointer",
+                            fontSize: 13,
+                            fontWeight: 600,
+                            lineHeight: 1.2,
+                          }}
+                        >
+                          {PERIOD_LABELS[m]}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* 選んだ結果を日付で示す。毎月1日に自動で切り替わる */}
+                  <div style={{
+                    marginTop: 8, fontSize: 11, color: "#78716C",
+                    lineHeight: 1.5, whiteSpace: "nowrap",
+                  }}>
+                    {periodFrom ? `${periodFrom.replace(/-/g, "/")}〜現在` : "すべての投稿"}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 🔍 住所検索バー。残り幅いっぱいに伸びる */}
+          <SearchBar onSearch={handleSearch} height={UI_ROW_H} />
+
+          {/* 📍 現在地ボタン */}
+          <button
+            type="button"
+            onClick={handleLocate}
+            aria-label="現在地を表示"
+            title="現在地を表示"
+            style={{
+              flexShrink: 0,
+              width: UI_ROW_H,
+              height: UI_ROW_H,
+              borderRadius: "50%",
+              background: "#ffffff",
+              border: "none",
+              boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              padding: 0,
+              opacity: locating ? 0.6 : 1,
+            }}
+          >
+            {/* ★色は SearchBar.tsx の虫眼鏡と同じ "#888" に揃えてある */}
+            <svg
+              width="16" height="16" viewBox="0 0 24 24" fill="none"
+              stroke="#888" strokeWidth="2"
+              strokeLinejoin="round" strokeLinecap="round"
+              style={{ display: "block" }}
+            >
+              <path d="M21 3L3 10.53v.98l6.84 2.65L12.48 21h.98L21 3z" />
+            </svg>
+          </button>
+        </div>
       )}
 
       {/* 現在地が取得できなかったときの案内（4秒で自動的に消える） */}
@@ -3588,9 +3715,13 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       <div
         style={{
           position: "absolute",
+          // ★2026-07-30：位置を UI_EDGE / UI_BOTTOM に統一。
+          //   スマホ＝左下、PC＝右上（上段の帯の下）。
+          //   スマホの下端は page.tsx のGボタンと同じ UI_BOTTOM なので、
+          //   凡例とGボタンの下端がぴったり揃う。
           ...(isMobile
-            ? { bottom: LEGEND_SP.bottom, left: LEGEND_SP.left }
-            : { top: LEGEND_PC.top, right: LEGEND_PC.right }),
+            ? { bottom: UI_BOTTOM, left: UI_EDGE }
+            : { top: UI_EDGE + UI_ROW_H + UI_GAP, right: UI_EDGE }),
           background: "white",
           borderRadius: 8,
           padding: isMobile ? LEGEND_SP.pad : LEGEND_PC.pad,
@@ -3657,158 +3788,15 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
           ))}
       </div>
 
-      {/* ============================================================
-          🗓 期間フィルター（2026-07-30 段階3）
-          左上に配置。閉じているときは、PC=アイコン＋文字／スマホ=アイコンのみ。
-          ★位置を調整したいときは下の FILTER_PC / FILTER_SP を変える。
-            住所検索バーの下に来るよう top を取ってあるが、検索バーの
-            大きさを変えたらここも見直すこと。
-          ★投稿の流れに入っている間は、他のボタンと同じく非表示にする。
-         ============================================================ */}
       {/* 絞り込みが開いている間、画面全体に透明な受け皿を置く。
           どこを触っても閉じる。地図には触らないので、閉じるつもりの
-          タップで地図が動いてしまうこともない。 */}
+          タップで地図が動いてしまうこともない。
+          ★上段の帯(zIndex 1000)より下、地図より上に置いている。 */}
       {tileMode && !inReportFlow && filterOpen && (
         <div
           onClick={() => setFilterOpen(false)}
           style={{ position: "absolute", inset: 0, zIndex: 999 }}
         />
-      )}
-
-      {tileMode && !inReportFlow && (
-        <div
-          style={{
-            position: "absolute",
-            ...(isMobile
-              ? { top: FILTER_SP.top, left: FILTER_SP.left }
-              : { top: FILTER_PC.top, left: FILTER_PC.left }),
-            zIndex: 1000,
-            userSelect: "none",
-            WebkitUserSelect: "none",
-          } as React.CSSProperties}
-        >
-          {!filterOpen ? (
-            <button
-              type="button"
-              onClick={() => setFilterOpen(true)}
-              aria-label="期間で絞り込む"
-              title="期間で絞り込む"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                background: "#ffffff",
-                border: "none",
-                borderRadius: 8,
-                boxShadow: "0 2px 10px rgba(0,0,0,0.15)",
-                padding: isMobile ? "8px" : "8px 12px",
-                cursor: "pointer",
-                fontSize: 13,
-                fontWeight: 600,
-                color: period === "all" ? "#292524" : "#662510",
-                lineHeight: 1,
-              }}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-                stroke={period === "all" ? "#888" : "#662510"} strokeWidth="2"
-                strokeLinecap="round" style={{ display: "block" }}>
-                {/* 設定つまみ（スライダー）の形。三本の線に、それぞれ
-                    位置の違うつまみを乗せた、一般的な絞り込みの記号。 */}
-                <line x1="3" y1="6" x2="21" y2="6" />
-                <line x1="3" y1="12" x2="21" y2="12" />
-                <line x1="3" y1="18" x2="21" y2="18" />
-                <circle cx="8" cy="6" r="2.5" fill="#fff" />
-                <circle cx="15" cy="12" r="2.5" fill="#fff" />
-                <circle cx="10" cy="18" r="2.5" fill="#fff" />
-              </svg>
-              {/* スマホでは文字を出さない（ご指定） */}
-              {!isMobile && <span>{PERIOD_LABELS[period]}</span>}
-              {/* 絞り込み中は、スマホでも分かるよう小さな点を出す */}
-              {isMobile && period !== "all" && (
-                <span
-                  style={{
-                    width: 6, height: 6, borderRadius: "50%",
-                    background: "#662510", display: "block",
-                  }}
-                />
-              )}
-            </button>
-          ) : (
-            <div
-              style={{
-                background: "#ffffff",
-                borderRadius: 12,
-                boxShadow: "0 4px 16px rgba(0,0,0,0.18)",
-                padding: "12px 14px",
-                minWidth: 168,
-              }}
-            >
-              {/* 見出し＋閉じる */}
-              <div
-                style={{
-                  display: "flex", alignItems: "center",
-                  justifyContent: "space-between", gap: 10, marginBottom: 8,
-                }}
-              >
-                <span style={{ fontSize: 12, fontWeight: 700, color: "#78716C" }}>
-                  期間
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setFilterOpen(false)}
-                  aria-label="閉じる"
-                  style={{
-                    border: "none", background: "transparent", cursor: "pointer",
-                    color: "#78716C", fontSize: 16, lineHeight: 1, padding: 0,
-                  }}
-                >
-                  ×
-                </button>
-              </div>
-
-              {/* 3つの選択肢。選ぶ言葉は短く保つ */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                {(["all", "1y", "3m"] as PeriodMode[]).map((m) => {
-                  const active = period === m;
-                  return (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => setPeriod(m)}
-                      style={{
-                        textAlign: "left",
-                        background: active ? "#662510" : "transparent",
-                        color: active ? "#FFFFFF" : "#292524",
-                        border: active ? "none" : "1px solid #E7E5E4",
-                        borderRadius: 8,
-                        padding: "8px 12px",
-                        cursor: "pointer",
-                        fontSize: 13,
-                        fontWeight: 600,
-                        lineHeight: 1.2,
-                      }}
-                    >
-                      {PERIOD_LABELS[m]}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* 選んだ結果を日付で示す。月単位の集計なので、実際の開始日を
-                  隠さずに出す。毎月1日に自動で切り替わる。 */}
-              <div
-                style={{
-                  marginTop: 8, fontSize: 11, color: "#78716C",
-                  lineHeight: 1.5, whiteSpace: "nowrap",
-                }}
-              >
-                {periodFrom
-                  ? `${periodFrom.replace(/-/g, "/")}〜現在`
-                  : "すべての投稿"}
-              </div>
-            </div>
-          )}
-        </div>
       )}
 
       <div ref={mapContainerRef} style={{ width: "100%", height: "100%" }} />
