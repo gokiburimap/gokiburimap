@@ -157,7 +157,7 @@ const MAX_CLOUD_DISPLAY_SIZE_PX = 220;
 // 通常は発動しない。動作が重いと感じたときだけ下げること。
 // ★これを下げすぎると、また最低保証半径が潰れてしまうので注意★
 // ============================================================
-const HARD_MAX_CLOUD_PX = 500;
+const HARD_MAX_CLOUD_PX = 600;
 
 // ============================================================
 // 🎨 目撃件数による色分け（2026-07-16新規実装）
@@ -1946,7 +1946,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   // font=見出し「目撃件数」の文字 / bodyFont=色見本のラベル
   // swatch=色見本の四角 / line=行間 / openHeadH=見出しと1行目の距離
   // ★font と radius は閉じたときの見た目を決める。他は開いたときだけ効く。
-  const LEGEND_SP = { font: 14, bodyFont: 12, swatch: 11, line: 1.6, radius: 10, openHeadH: 34 };
+  const LEGEND_SP = { font: 14, bodyFont: 12, swatch: 10, line: 1.7, radius: 10, openHeadH: 32 };
   const LEGEND_PC = { font: 15, bodyFont: 14, swatch: 16, line: 1.8, radius: 10, openHeadH: 38 };
   // 見出し「目撃件数」と▶の色。Gボタンの文字色と同じにしてある。
   const LEGEND_HEAD_COLOR = "#292524";
