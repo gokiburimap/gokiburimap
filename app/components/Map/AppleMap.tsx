@@ -93,7 +93,7 @@ declare global {
   }
 }
 
-const ZOOM_THRESHOLD = 0.009;
+const ZOOM_THRESHOLD = 0.012;
 const MAX_CLUSTER_ZOOM = 20;
 
 // ============================================================
@@ -157,7 +157,7 @@ const MAX_CLOUD_DISPLAY_SIZE_PX = 220;
 // 通常は発動しない。動作が重いと感じたときだけ下げること。
 // ★これを下げすぎると、また最低保証半径が潰れてしまうので注意★
 // ============================================================
-const HARD_MAX_CLOUD_PX = 700;
+const HARD_MAX_CLOUD_PX = 500;
 
 // ============================================================
 // 🎨 目撃件数による色分け（2026-07-16新規実装）
@@ -1946,7 +1946,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   // font=見出し「目撃件数」の文字 / bodyFont=色見本のラベル
   // swatch=色見本の四角 / line=行間 / openHeadH=見出しと1行目の距離
   // ★font と radius は閉じたときの見た目を決める。他は開いたときだけ効く。
-  const LEGEND_SP = { font: 14, bodyFont: 12, swatch: 10, line: 1.6, radius: 10, openHeadH: 34 };
+  const LEGEND_SP = { font: 14, bodyFont: 12, swatch: 12, line: 1.6, radius: 10, openHeadH: 34 };
   const LEGEND_PC = { font: 15, bodyFont: 14, swatch: 16, line: 1.8, radius: 10, openHeadH: 38 };
   // 見出し「目撃件数」と▶の色。Gボタンの文字色と同じにしてある。
   const LEGEND_HEAD_COLOR = "#292524";
@@ -2586,7 +2586,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       //     50m … 霧の直径700px（上限に張り付く）
       //     80m … 652px ／ 100m … 522px ／ 150m … 348px
       //   ★上げるほど建物を特定しにくくなり、法的リスク対策は強まる★
-      const MIN_CAMERA_DISTANCE_METERS_SP = 65;
+      const MIN_CAMERA_DISTANCE_METERS_SP = 70;
       const isMobileInit = typeof window !== "undefined" && window.innerWidth < 768;
       map.cameraZoomRange = new window.mapkit.CameraZoomRange(
         isMobileInit ? MIN_CAMERA_DISTANCE_METERS_SP : MIN_CAMERA_DISTANCE_METERS_PC
