@@ -401,7 +401,7 @@ function seededRandom(seed: number) {
 // 問題（不正確な表示による誤解）を生むため。
 // 【初期値】4m
 // ============================================================
-const OFFSET_MAX_METERS = 4;
+const OFFSET_MAX_METERS = 5;
 
 // ============================================================
 // 🌫️ 霧調整エリア（2026-07-22 追加）
@@ -594,8 +594,8 @@ function createCloudIconUrl(count: number, colorCount: number, size: number, see
   //   全体を濃くしたいときは MIN を上げる。件数で濃さを変えたいときは
   //   MAX を 0.4〜0.5 に上げる（処理の負担は増えない）。
   // ============================================================
-  const MIN_CLOUD_OPACITY = 0.3;
-  const MAX_CLOUD_OPACITY = 0.3;
+  const MIN_CLOUD_OPACITY = 0.5;
+  const MAX_CLOUD_OPACITY = 0.5;
   const baseOpacity = Math.min(
     MIN_CLOUD_OPACITY + Math.log10(count) * 0.12,
     MAX_CLOUD_OPACITY
@@ -748,10 +748,13 @@ function calcCloudGrowthPx(count: number) {
 // 現在は土台として必ず効くようになっている。
 //
 // 【逆に「大きすぎる」と感じたときの注意】
-// この値を下げるのではなく、MIN_CAMERA_DISTANCE_METERS(下方にある)を
-// 上げてズームを浅く制限すること。この値を下げると法的リスク対策が
-// 薄まるが、ズーム制限を強めるほうは対策が強まる方向なので一石二鳥。
-// この2つはセットで調整するもの、と覚えておけばよい。
+// ★深くズームした状態では、この値を下げても見た目は変わらない★
+//   HARD_MAX_CLOUD_PX(このファイル上部)の上限が先に効いているため。
+//   その場合の調整先は次の2つ。
+//     ・HARD_MAX_CLOUD_PX を下げる（画面上の霧が素直に小さくなる）
+//       ただし350を下回ると、投稿地点に色が届かなくなるので下限は350。
+//     ・MIN_CAMERA_DISTANCE_METERS_SP / _PC（setupMap の中にある）を
+//       上げてズームを浅く制限する。法的リスク対策は強まる方向。
 // ============================================================
 const MIN_COVERAGE_RADIUS_METERS = 120;
 
@@ -1943,7 +1946,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   // font=見出し「目撃件数」の文字 / bodyFont=色見本のラベル
   // swatch=色見本の四角 / line=行間 / openHeadH=見出しと1行目の距離
   // ★font と radius は閉じたときの見た目を決める。他は開いたときだけ効く。
-  const LEGEND_SP = { font: 14, bodyFont: 12, swatch: 12, line: 1.5, radius: 10, openHeadH: 34 };
+  const LEGEND_SP = { font: 14, bodyFont: 12, swatch: 12, line: 1.6, radius: 10, openHeadH: 34 };
   const LEGEND_PC = { font: 15, bodyFont: 14, swatch: 16, line: 1.8, radius: 10, openHeadH: 38 };
   // 見出し「目撃件数」と▶の色。Gボタンの文字色と同じにしてある。
   const LEGEND_HEAD_COLOR = "#292524";
@@ -2578,7 +2581,12 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       //   下げるのではなく、こちらを上げること。
       // ============================================================
       const MIN_CAMERA_DISTANCE_METERS_PC = 200;
-      const MIN_CAMERA_DISTANCE_METERS_SP = 50; // スマホ用。小さいほど深く寄れる（2026-07-20: 80→50）
+      // ★スマホのズームの深さ。小さいほど深く寄れる（2026-07-20: 80→50）
+      //   上げると霧も画面上で小さくなる。目安：
+      //     50m … 霧の直径700px（上限に張り付く）
+      //     80m … 652px ／ 100m … 522px ／ 150m … 348px
+      //   ★上げるほど建物を特定しにくくなり、法的リスク対策は強まる★
+      const MIN_CAMERA_DISTANCE_METERS_SP = 65;
       const isMobileInit = typeof window !== "undefined" && window.innerWidth < 768;
       map.cameraZoomRange = new window.mapkit.CameraZoomRange(
         isMobileInit ? MIN_CAMERA_DISTANCE_METERS_SP : MIN_CAMERA_DISTANCE_METERS_PC
