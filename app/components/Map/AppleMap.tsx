@@ -401,7 +401,7 @@ function seededRandom(seed: number) {
 // 問題（不正確な表示による誤解）を生むため。
 // 【初期値】4m
 // ============================================================
-const OFFSET_MAX_METERS = 300;
+const OFFSET_MAX_METERS = 5;
 
 // ============================================================
 // 🌫️ 霧調整エリア（2026-07-22 追加）
@@ -1931,7 +1931,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   //               下に伸びて見えるぶんを合わせた意図的な補正。
   const UI_BOX_H = 52;
 
-  const UI_SP = { edge: 12, rowH: 36, gap: 8, bottom: 35, searchMax: 9999 };
+  const UI_SP = { edge: 12, rowH: 36, gap: 8, bottom: 32, searchMax: 9999 };
   const UI_PC = { edge: 12, rowH: 36, gap: 8, bottom: 35, searchMax: 420 };
   const UI = isMobile ? UI_SP : UI_PC;
 
@@ -1946,7 +1946,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   // font=見出し「目撃件数」の文字 / bodyFont=色見本のラベル
   // swatch=色見本の四角 / line=行間 / openHeadH=見出しと1行目の距離
   // ★font と radius は閉じたときの見た目を決める。他は開いたときだけ効く。
-  const LEGEND_SP = { font: 14, bodyFont: 12, swatch: 10, line: 1.7, radius: 10, openHeadH: 32 };
+  const LEGEND_SP = { font: 14, bodyFont: 12, swatch: 12, line: 1.7, radius: 10, openHeadH: 32 };
   const LEGEND_PC = { font: 15, bodyFont: 14, swatch: 16, line: 1.8, radius: 10, openHeadH: 38 };
   // 見出し「目撃件数」と▶の色。Gボタンの文字色と同じにしてある。
   const LEGEND_HEAD_COLOR = "#292524";
