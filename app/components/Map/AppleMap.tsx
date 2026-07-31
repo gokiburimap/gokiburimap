@@ -3767,8 +3767,12 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
           style={{
             display: "flex",
             alignItems: "center",
-            justifyContent: "space-between",
-            gap: 8,
+            // ★2026-07-30：閉じているときは中央寄せにする。
+            //   開いているときは色見本の一覧が下に続くので、見出しは
+            //   左、矢印は右（space-between）のほうが読みやすい。
+            //   閉じているとその2つだけになるので、真ん中に置く。
+            justifyContent: legendCollapsed ? "center" : "space-between",
+            gap: legendCollapsed ? 6 : 8,
             marginBottom: legendCollapsed ? 0 : 4,
             padding: "6px 0",
             margin: "-6px 0",

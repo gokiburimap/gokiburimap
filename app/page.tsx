@@ -494,7 +494,11 @@ export default function Home() {
       bottom: `${isMobileUI ? G_BOTTOM_SP : G_BOTTOM_PC}px`,
       right: `${G_RIGHT}px`,
       display: "flex",
-      alignItems: "center",
+      // ★2026-07-30：中央揃え(center)から下端揃え(flex-end)に変更。
+      //   丸ボタン(52px)とラベル(約45px)の高さが違うため、中央揃えだと
+      //   ラベルの下端だけが3.5px浮き、凡例の下端と揃わなかった。
+      //   下端揃えにすると、丸ボタン・ラベル・凡例の3つが同じ高さに並ぶ。
+      alignItems: "flex-end",
       gap: "10px",
       zIndex: 500,
     }}
