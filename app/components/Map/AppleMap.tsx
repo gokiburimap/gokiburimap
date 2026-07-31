@@ -1982,7 +1982,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   //   すべて同じ高さになり、中の文字も同じ高さに並ぶ。
   const UI_BOX_H = 52;
 
-  const UI_SP = { edge: 12, rowH: 36, gap: 8, bottom: 35, searchMax: 9999 };
+  const UI_SP = { edge: 12, rowH: 36, gap: 8, bottom: 30, searchMax: 9999 };
   const UI_PC = { edge: 12, rowH: 36, gap: 8, bottom: 35, searchMax: 420 };
   const UI = isMobile ? UI_SP : UI_PC;
 
@@ -1994,8 +1994,8 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   //   ★page.tsx 側のラベルを変えたら、ここも同じ数字に合わせること★
   //     page.tsx: padding "14px 18px" / fontSize 14 / borderRadius 10
   // ============================================================
-  const LEGEND_PC = { font: 15, swatch: 15, pad: "14px 18px", line: 1.8, radius: 10 };
-  const LEGEND_SP = { font: 14, swatch: 14, pad: "14px 18px", line: 1.6, radius: 10 };
+  const LEGEND_PC = { font: 15, swatch: 20, pad: "14px 18px", line: 2.0, radius: 10 };
+  const LEGEND_SP = { font: 14, swatch: 16, pad: "14px 18px", line: 1.6, radius: 10 };
   // 見出し「目撃件数」と▶の色。Gボタンの文字色と同じにしてある。
   const LEGEND_HEAD_COLOR = "#292524";
   // ★凡例を最初から閉じた状態にしたいときは、ここを true にする。
@@ -3781,10 +3781,13 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
             //   続くので、見出し左・矢印右のほうが読みやすい。
             justifyContent: legendCollapsed ? "center" : "space-between",
             gap: 8,
-            // ★高さを UI_BOX_H に固定する。これでGボタンの箱と必ず
-            //   同じ高さになり、中の文字も同じ高さに並ぶ。
+            // ★閉じているときは UI_BOX_H に固定する。これでGボタンの箱と
+            //   必ず同じ高さになり、中の文字も同じ高さに並ぶ。
             //   行全体が押せるので、当たり判定も52px分ある。
-            height: UI_BOX_H,
+            //   ★開いているときは低くする。閉じたときの高さのままだと、
+            //     見出しと1つ目の色見本の間が空きすぎるため。
+            //     ここを大きくすると間隔が広がる。
+            height: legendCollapsed ? UI_BOX_H : 38,
             cursor: "pointer",
           }}
         >

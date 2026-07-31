@@ -365,8 +365,13 @@ function HowToGuideContent() {
 
       <Section title="絞り込み">
         <Paragraph>
-          目撃した日付で、地図の表示を絞り込むことができます。「1年以内」「3か月以内」といった期間を選ぶと、期間内に目撃された情報だけが地図に表示されます。最近の状況を知りたいときにお使いください。
+          地図の左上にある絞り込みボタンから、目撃した日付で表示を絞り込めます。「過去1年」「過去3か月」を選ぶと、その期間に目撃された情報だけが地図に表示されます。最近の状況を知りたいときにお使いください。
         </Paragraph>
+        <Box>
+          <p style={{ fontSize: 13, lineHeight: 1.8, color: "#292524", margin: 0 }}>
+            集計は月単位で行っているため、期間の区切りは月の初日になります。たとえば7月に「過去3か月」を選んだ場合は、5月1日以降の情報が対象です。実際に集計している期間は、絞り込みを開いたときに「2026/05/01〜現在」のように表示されます。
+          </p>
+        </Box>
       </Section>
 
       {/* 最後のセクションは区切り線が不要なので、Sectionを使わず直接記述 */}
@@ -860,12 +865,18 @@ export default function HeaderMenu() {
         aria-label={open ? "メニューを閉じる" : "メニューを開く"}
         onClick={() => setOpen((v) => !v)}
         style={{
-          width: 32,
-          height: 32,
+          // ★2026-07-30：ひと回り大きくした（32→44 / 文字20→24）。
+          //   44pxは指で押しやすい大きさの目安。
+          //   marginRight のマイナスは、当たり判定を広げつつ、見た目を
+          //   画面の端に少し寄せるためのもの。地図側のボタン（端から12px）
+          //   と視覚的に揃う。押しにくければ width/height を上げる。
+          width: 44,
+          height: 44,
+          marginRight: -6,
           border: "none",
           background: "transparent",
           color: "#662510",
-          fontSize: 20,
+          fontSize: 24,
           fontWeight: 700,
           lineHeight: 1,
           cursor: "pointer",

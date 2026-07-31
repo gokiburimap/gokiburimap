@@ -527,7 +527,10 @@ export default function Home() {
         display: "flex",
         alignItems: "center",
         padding: "0 18px",
-        boxShadow: "0 2px 14px rgba(0,0,0,0.1)",
+        // ★2026-07-30：凡例の箱と影を完全に同じにした。
+        //   影の濃さ・ぼかしが違うと、同じ位置でも下端の見え方が
+        //   変わってしまうため（AppleMap.tsx の凡例と同じ指定）。
+        boxShadow: "0 2px 10px rgba(0,0,0,0.15)",
         whiteSpace: "nowrap",
       }}
     >
