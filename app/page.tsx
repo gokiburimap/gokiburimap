@@ -67,7 +67,7 @@ const G_RIGHT = 12;
 //   ★地図上のボタン（AppleMap.tsx の UI_SP.edge / UI_PC.edge＝12）と
 //     同じにすると端が揃う。ただしハンバーガーは寄せすぎると押しにくい。
 //   ★ハンバーガーの見た目の大きさ・当たり判定は HeaderMenu.tsx 側★
-const HEADER_PAD_LEFT_SP = 20;
+const HEADER_PAD_LEFT_SP = 40;
 const HEADER_PAD_RIGHT_SP = 16;
 const HEADER_PAD_LEFT_PC = 16;
 const HEADER_PAD_RIGHT_PC = 16;
