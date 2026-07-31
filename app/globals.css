@@ -5,13 +5,6 @@
   --foreground: #171717;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
@@ -19,87 +12,54 @@ body {
 }
 
 /* ============================================================
-   ★2026-07-24 追加：ヘッダーの左右余白
-   スマホは従来通り 12px 16px。
-   PC/Web（768px以上）だけ右側の余白を少し広げて、ハンバーガー
-   メニューを画面端からほんの少し内側（左）へ寄せている。
-   もっと左に寄せたい／戻したいときは、下の 768px以上のブロックの
-   padding の値（右側=24px の部分）を増減させればよい。
+   📐【ヘッダーの左右の余白はここ】(2026-07-30 CSSに一本化)
+   
+   ★以前は page.tsx 側でも指定していたが、二重管理になっていた。
+     さらに page.tsx の指定はスマホ判定(JavaScript)に頼っており、
+     サーバー側で描いた時点では必ず「PC」と判定されるため、
+     スマホ用の値が効かないことがあった。
+     CSSのメディアクエリなら判定が不要で、確実に効く。
+   
+   ・左の数値 … ゴキブリアイコン＋サイト名の位置
+                 大きくする → 右へ動く
+   ・右の数値 … ハンバーガーメニューの位置
+                 大きくする → 左へ動く
+   ★ハンバーガーは寄せすぎると押しにくい。ただし HeaderMenu.tsx 側で
+     当たり判定を44pxに広げ、marginRightで外側へずらしてあるので、
+     見た目より押しやすくなっている。
    ============================================================ */
+
+/* スマホ（768px未満）：上下12px / 右16px / 左20px */
 .app-header {
-  padding: 12px 16px;
+  padding: 12px 16px 12px 20px;
 }
 
+/* PC（768px以上） */
 @media (min-width: 768px) {
   .app-header {
     padding: 12px 24px 12px 16px;
   }
 }
 
-@keyframes pulse-ring {
-  0% {
-    transform: scale(0.9);
-    opacity: 0.6;
-  }
-  100% {
-    transform: scale(1.8);
-    opacity: 0;
-  }
-}
-
-.report-fab-wrapper {
-  position: absolute;
-  bottom: 24px;
-  right: 24px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  z-index: 20;
-}
-
-.report-fab-label {
-  background: rgba(255, 255, 255, 0.9);
-  border-radius: 12px;
-  padding: 8px 14px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-  white-space: nowrap;
-}
-
-.report-fab-label-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #1f2937;
-}
-
-.report-fab-label-sub {
-  font-size: 11px;
-  color: #6b7280;
-  margin-top: 2px;
-}
-
-.report-fab-button {
-  position: relative;
-  width: 56px;
-  height: 56px;
-}
-
-.report-fab-ring {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: #14b8a6;
-  animation: pulse-ring 2s ease-out infinite;
-}
-
-.report-fab-circle {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: #14b8a6;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
-  border: none;
-  cursor: pointer;
-}
+/* ============================================================
+   ★2026-07-30 削除したもの（記録）
+   
+   ・.report-fab-* 一式
+       Gボタンの旧デザイン（水色 #14b8a6 の頃）の名残。
+       現在のGボタンは page.tsx の中に直接書かれており、
+       これらの指定はどこからも使われていなかった。
+   
+   ・@keyframes pulse-ring
+       page.tsx の中にも同名の指定があり、二重定義になっていた。
+       しかも広がり方の数値が違う（こちら1.8／page.tsx 1.35）。
+       どちらが効くかが読み込み順で決まる不安定な状態だったので、
+       page.tsx 側の1つだけを残した。
+       ★波紋の調整は page.tsx の PULSE_SCALE で行う★
+   
+   ・ダークモードの指定（prefers-color-scheme: dark）
+       文字色・背景色を反転させる指定だったが、地図が画面の
+       ほぼ全面を覆うため効果が無く、端末の設定によっては
+       意図しない見た目になる可能性があった。
+       ★ダークモードに対応する場合は、地図の配色も含めて
+         あらためて設計すること★
+   ============================================================ */

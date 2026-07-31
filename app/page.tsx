@@ -44,33 +44,15 @@ interface MapHandle {
 }
 
 // ============================================================
-// 📐【Gボタンと余白の調整はここ】(2026-07-30 統一)
-//
-// ★AppleMap.tsx の UI_SP / UI_PC と揃えること★
-//   ・bottom は AppleMap.tsx の UI_SP.bottom / UI_PC.bottom と同じ数字。
-//     ここが揃っていると、Gボタンと凡例の下端がぴったり並ぶ。
-//   ・right は AppleMap.tsx の UI_SP.edge / UI_PC.edge と同じ数字。
-//     ここが揃っていると、現在地ボタンとGボタンの右端が並ぶ。
-//   ・HEADER_PAD はヘッダーの左右の余白。地図上のボタンと視覚的に
-//     揃えるための値。ハンバーガーメニューを端に寄せすぎると押しにくい
-//     ので、12ではなく16にしてある。
+// 📐【Gボタンの位置はここ】
+// ★AppleMap.tsx と揃えること★
+//   bottom … UI_SP.bottom / UI_PC.bottom と同じ数字（凡例と下端が揃う）
+//   right  … UI_SP.edge と同じ数字（現在地ボタンと右端が揃う）
+// ★ヘッダーの左右の余白は globals.css の .app-header で調整する★
 // ============================================================
 const G_BOTTOM_SP = 30;
 const G_BOTTOM_PC = 35;
 const G_RIGHT = 12;
-
-// ★ヘッダーの左右の余白。左右・スマホ/PCを別々に調整できる。
-//   LEFT  … ゴキブリアイコン＋サイト名の位置
-//            数字を大きくする → 右へ動く
-//   RIGHT … ハンバーガーメニューの位置
-//            数字を大きくする → 左へ動く
-//   ★地図上のボタン（AppleMap.tsx の UI_SP.edge / UI_PC.edge＝12）と
-//     同じにすると端が揃う。ただしハンバーガーは寄せすぎると押しにくい。
-//   ★ハンバーガーの見た目の大きさ・当たり判定は HeaderMenu.tsx 側★
-const HEADER_PAD_LEFT_SP = 40;
-const HEADER_PAD_RIGHT_SP = 16;
-const HEADER_PAD_LEFT_PC = 16;
-const HEADER_PAD_RIGHT_PC = 16;
 
 // ★Gボタンの円の直径。ラベルの箱もこの高さに揃えるので、
 //   Gの文字と「目撃情報を報告する」の文字が必ず同じ高さに並ぶ。
@@ -308,12 +290,13 @@ export default function Home() {
           alignItems: "center",
           justifyContent: "space-between",
           gap: 10,
-          // ★2026-07-30：左右に余白を入れ、地図上のボタン（絞り込み・
-          //   現在地）の端と視覚的に揃えた。数値は上の HEADER_PAD。
-          //   ★ハンバーガーメニューを端に寄せすぎると押しにくくなるので、
-          //     地図側の12ではなく16にしてある。押しにくければ上げること。
-          paddingLeft: isMobileUI ? HEADER_PAD_LEFT_SP : HEADER_PAD_LEFT_PC,
-          paddingRight: isMobileUI ? HEADER_PAD_RIGHT_SP : HEADER_PAD_RIGHT_PC,
+          // ★左右の余白は globals.css の .app-header で指定している。
+          //   ここで指定すると二重管理になり、しかもスマホ判定が
+          //   サーバー側で効かないため反映されないことがあった。
+          // ★タイトルを長押しで選択・コピーできないようにする
+          userSelect: "none",
+          WebkitUserSelect: "none",
+          WebkitTouchCallout: "none",
         }}
       >
         {/* ============================================================

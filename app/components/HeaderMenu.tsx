@@ -33,6 +33,13 @@ const PANEL_CONTENT_MAX_WIDTH = 640;
 // ------------------------------------------------------------
 const CONTACT_EMAIL = "gokiburimap@gmail.com";
 
+// メールアドレスだけは選択・コピーできるようにする（下の指定を打ち消す）
+const SELECTABLE = {
+  userSelect: "text",
+  WebkitUserSelect: "text",
+  WebkitTouchCallout: "default",
+} as const;
+
 // ------------------------------------------------------------
 // 初回訪問時のウェルカム画面
 // ★2026-07-26：新規追加。初回のみ全画面で表示し、「地図をみる」で閉じる。
@@ -408,7 +415,7 @@ function HowToGuideContent() {
         <Paragraph>
           <a
             href={`mailto:${CONTACT_EMAIL}`}
-            style={{ color: "#292524", fontWeight: 700, textDecoration: "underline" }}
+            style={{ color: "#292524", fontWeight: 700, textDecoration: "underline", ...SELECTABLE }}
           >
             {CONTACT_EMAIL}
           </a>
@@ -568,7 +575,7 @@ function PrivacyPolicyContent() {
       <Section title="お問い合わせ">
         <Box>
           <Paragraph>
-            <a href={`mailto:${CONTACT_EMAIL}`} style={{ color: "#292524", fontWeight: 700, textDecoration: "underline" }}>
+            <a href={`mailto:${CONTACT_EMAIL}`} style={{ color: "#292524", fontWeight: 700, textDecoration: "underline", ...SELECTABLE }}>
               {CONTACT_EMAIL}
             </a>
           </Paragraph>
@@ -727,7 +734,7 @@ function ContactContent() {
           <Paragraph>
             <a
               href={`mailto:${CONTACT_EMAIL}`}
-              style={{ color: "#292524", fontWeight: 700, textDecoration: "underline" }}
+              style={{ color: "#292524", fontWeight: 700, textDecoration: "underline", ...SELECTABLE }}
             >
               {CONTACT_EMAIL}
             </a>
@@ -876,7 +883,7 @@ export default function HeaderMenu() {
           border: "none",
           background: "transparent",
           color: "#662510",
-          fontSize: 25,// ☰ の見た目の大きさ
+          fontSize: 24,// ☰ の見た目の大きさ
           fontWeight: 700,
           lineHeight: 1,
           cursor: "pointer",
@@ -919,6 +926,9 @@ export default function HeaderMenu() {
           flexDirection: "column",
           // 地図側のtouchAction:"none"の影響を受けないようにする
           touchAction: "auto",
+          userSelect: "none",
+          WebkitUserSelect: "none",
+          WebkitTouchCallout: "none",
         }}
       >
         {/* ドロワー上部：見出し＋閉じるボタン */}
@@ -1018,6 +1028,9 @@ export default function HeaderMenu() {
             inset: 0,
             background: "#ffffff",
             zIndex: 4000,
+            userSelect: "none",
+            WebkitUserSelect: "none",
+            WebkitTouchCallout: "none",
             display: "flex",
             flexDirection: "column",
           }}
