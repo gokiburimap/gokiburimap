@@ -876,7 +876,7 @@ export default function HeaderMenu() {
           border: "none",
           background: "transparent",
           color: "#662510",
-          fontSize: 34,
+          fontSize: 25,
           fontWeight: 700,
           lineHeight: 1,
           cursor: "pointer",

@@ -3757,7 +3757,11 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
           //   文字の行の高さに左右されて、Gボタンの箱と揃わなかったため。
           //   見出しの行の高さを UI_BOX_H に固定する方式に変更（下を参照）。
           //   左右の余白だけをここで持ち、開いたときは下側にも余白を足す。
-          padding: legendCollapsed ? "0 18px" : "0 18px 14px",
+          // ★開いているときの上の余白（8）で、「目撃件数」と箱の上端の
+          //   間隔を決めている。閉じたときは見出しの行が52pxあり、その中で
+          //   上下中央に置かれるので、余白は0でちょうどよくなる。
+          //   ★上が詰まって見えたらこの 8 を大きくする★
+          padding: legendCollapsed ? "0 18px" : "8px 18px 14px",
           boxShadow: "0 2px 10px rgba(0,0,0,0.15)",
           fontSize: isMobile ? LEGEND_SP.font : LEGEND_PC.font,
           color: "#292524",
