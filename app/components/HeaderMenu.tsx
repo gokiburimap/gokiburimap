@@ -369,7 +369,7 @@ function HowToGuideContent() {
         </Paragraph>
         <Box>
           <p style={{ fontSize: 13, lineHeight: 1.8, color: "#292524", margin: 0 }}>
-            集計は月単位のため、期間の区切りは月の初日になります。たとえば7月に「過去3か月」を選んだ場合は、5月1日以降の情報が対象です。実際に集計している期間は、絞り込みを開いたときに「2026/05/01〜現在」のように表示されます。
+            集計は月単位で行っているため、期間の区切りは月の初日です。たとえば7月に「過去3か月」を選ぶと、5月1日以降の情報が対象になります。実際に集計している期間は、絞り込みを開いたときに「2026/05/01〜現在」のように表示されます。
           </p>
         </Box>
       </Section>
@@ -872,7 +872,7 @@ export default function HeaderMenu() {
           //   と視覚的に揃う。押しにくければ width/height を上げる。
           width: 44,// 当たり判定の大きさ
           height: 44,
-          marginRight: -7,// マイナスにすると右に寄る
+          marginRight: -8,// マイナスにすると右に寄る
           border: "none",
           background: "transparent",
           color: "#662510",
