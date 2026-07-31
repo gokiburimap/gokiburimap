@@ -43,6 +43,27 @@ interface MapHandle {
   isZoomedInEnough: () => boolean;
 }
 
+// ============================================================
+// 📐【Gボタンと余白の調整はここ】(2026-07-30 統一)
+//
+// ★AppleMap.tsx の UI_SP / UI_PC と揃えること★
+//   ・bottom は AppleMap.tsx の UI_SP.bottom / UI_PC.bottom と同じ数字。
+//     ここが揃っていると、Gボタンと凡例の下端がぴったり並ぶ。
+//   ・right は AppleMap.tsx の UI_SP.edge / UI_PC.edge と同じ数字。
+//     ここが揃っていると、現在地ボタンとGボタンの右端が並ぶ。
+//   ・HEADER_PAD はヘッダーの左右の余白。地図上のボタンと視覚的に
+//     揃えるための値。ハンバーガーメニューを端に寄せすぎると押しにくい
+//     ので、12ではなく16にしてある。
+// ============================================================
+const G_BOTTOM_SP = 30;
+const G_BOTTOM_PC = 35;
+const G_RIGHT = 12;
+const HEADER_PAD = 16;
+
+// 波紋の広がり。Gボタン(52px)に対する倍率。
+// ★大きくすると画面の端で切れる★ 1.5だと右端で1pxほど欠けたため1.35にした。
+const PULSE_SCALE = 1.35;
+
 export default function Home() {
   const [step, setStep] = useState<Step>("idle");
   const [pos, setPos] = useState<ReportPos | null>(null);
@@ -50,6 +71,16 @@ export default function Home() {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const mapRef = useRef<MapHandle | null>(null);
   const [showZoomWarning, setShowZoomWarning] = useState(false);
+
+  // ============================================================
+  // 📱 スマホ判定（2026-07-30 追加）
+  // AppleMap.tsx / SearchBar.tsx と同じ基準（画面幅768px未満）。
+  // Gボタンの下端をPCとスマホで変えるために使う。
+  // ============================================================
+  const [isMobileUI] = useState(
+    () => typeof window !== "undefined" && window.innerWidth < 768
+  );
+
   // ============================================================
   // 🚫 投稿できない場所をタップしたときの警告（2026-07-18 追加）
   // ズーム警告(showZoomWarning)と同じ仕組み。海外・海などをタップすると
@@ -259,9 +290,12 @@ export default function Home() {
           alignItems: "center",
           justifyContent: "space-between",
           gap: 10,
-          userSelect: "none",
-          WebkitUserSelect: "none",
-          WebkitTouchCallout: "none",
+          // ★2026-07-30：左右に余白を入れ、地図上のボタン（絞り込み・
+          //   現在地）の端と視覚的に揃えた。数値は上の HEADER_PAD。
+          //   ★ハンバーガーメニューを端に寄せすぎると押しにくくなるので、
+          //     地図側の12ではなく16にしてある。押しにくければ上げること。
+          paddingLeft: HEADER_PAD,
+          paddingRight: HEADER_PAD,
         }}
       >
         {/* ============================================================
@@ -275,6 +309,8 @@ export default function Home() {
             ゴキブリマップ
           </h1>
         </div>
+        {/* ★2026-07-29：投稿の流れに入っている間はメニューを出さない。
+            Gボタン・検索バー・現在地ボタンと同じ条件で揃えてある。 */}
         {step === "idle" && !justPosted && <HeaderMenu />}
       </header>
       {/*
@@ -310,7 +346,7 @@ export default function Home() {
           onDismissJustPosted={() => setJustPosted(null)}
           onJustPostedDeleted={() => {
             // 取り消し成功：確認ピンを消し、地図を再読込して霧も消す
-            // （DB側はトリガーが周辺のnearby_countを自動で減らしている）
+            // （DB側はトリガーが集計表を自動で減らしている）
             setJustPosted(null);
             setRefreshTrigger(n => n + 1);
           }}
@@ -435,40 +471,53 @@ export default function Home() {
   </div>
 )}
 
-       {step === "idle" && !justPosted && (
+        {/* ★2026-07-29：確認画面が出ている間はGボタンを出さない。
+            出したままだと、確認画面を飛ばして次の投稿に入れてしまい、
+            前の投稿の削除トークンも失われる。 */}
+        {step === "idle" && !justPosted && (
          <>
   <style>{`
     @keyframes pulse-ring {
       0% { transform: scale(0.95); opacity: 0.3; }
-      100% { transform: scale(1.35); opacity: 0; }
+      100% { transform: scale(${PULSE_SCALE}); opacity: 0; }
     }
   `}</style>
 
-  {/* 🪳★【Gボタンの位置はここ】bottom=下から、right=右からの距離(px) */}
+  {/* 🪳★【Gボタンの位置はここ】★
+      ★AppleMap.tsx の UI_SP / UI_PC と必ず揃えること★
+        bottom … UI_SP.bottom / UI_PC.bottom と同じ数字（凡例と下端が揃う）
+        right  … UI_SP.edge / UI_PC.edge と同じ数字（現在地ボタンと右端が揃う）
+      調整は、このファイル上部の G_BOTTOM_SP / G_BOTTOM_PC / G_RIGHT で行う。 */}
   <div
     style={{
       position: "absolute",
-      bottom: "30px",
-      right: "12px",
+      bottom: `${isMobileUI ? G_BOTTOM_SP : G_BOTTOM_PC}px`,
+      right: `${G_RIGHT}px`,
       display: "flex",
       alignItems: "center",
       gap: "10px",
       zIndex: 500,
     }}
   >
-    {/* ラベル部分 */}
+    {/* ラベル部分
+        ★2026-07-30：凡例（目撃件数の箱）と見た目を揃えた。
+          余白・文字サイズ・角の丸み・文字色を同じにしてあるので、
+          閉じた凡例とこのラベルの高さがぴったり並ぶ。
+        ★半透明＋ぼかしをやめた理由★
+          ここだけ半透明で他は不透明の白、という不統一があったうえ、
+          地図の模様が透けて文字が読みにくくなっていたため。
+        ★AppleMap.tsx の LEGEND_SP / LEGEND_PC を変えたら、ここも同じ
+          数字に合わせること（padding / fontSize / borderRadius）。 */}
     <div
       style={{
-        background: "#ffffff73",
-        backdropFilter: "blur(8px)",
-        WebkitBackdropFilter: "blur(8px)",
+        background: "#ffffff",
         borderRadius: "10px",
         padding: "14px 18px",
         boxShadow: "0 2px 14px rgba(0,0,0,0.1)",
         whiteSpace: "nowrap",
       }}
     >
-      <div style={{ fontSize: "14px",fontWeight: "500", color: "rgb(51, 54, 57)" }}>
+      <div style={{ fontSize: "14px", fontWeight: 500, color: "#292524", lineHeight: 1.2 }}>
         目撃情報を報告する
       </div>
     </div>

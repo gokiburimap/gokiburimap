@@ -1,6 +1,6 @@
 "use client";
 
-import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import Supercluster from "supercluster";
 import { supabase } from "../../lib/supabase";
 import SearchBar from "../SearchBar";
@@ -1479,7 +1479,6 @@ type TileRow = {
 
 async function fetchTiles(
   map: any,
-  containerEl: HTMLDivElement | null,
   tileZ: number,
   fromMonth: string | null,
   viewportRatio: number
@@ -1927,12 +1926,6 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
     "3m": "過去3か月",
   };
 
-  // ★絞り込みボタンの位置はここ。左上に置いている。
-  //   住所検索バーの下に来るよう top を取ってあるので、検索バーの
-  //   大きさを変えたらこの値も見直すこと。
-  const FILTER_PC = { top: 58, left: 10 };
-  const FILTER_SP = { top: 54, left: 10 };
-
   // 絞り込みの開始月（その月の1日）。全期間ならnull。
   const periodFrom = (() => {
     if (period === "all") return null;
@@ -1984,11 +1977,21 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   //               スマホは画面が狭いので大きめ＝実質無制限にしてある。
   // ============================================================
   const UI_SP = { edge: 12, rowH: 36, gap: 8, bottom: 30, searchMax: 9999 };
-  const UI_PC = { edge: 12, rowH: 36, gap: 8, bottom: 30, searchMax: 420 };
+  const UI_PC = { edge: 12, rowH: 36, gap: 8, bottom: 35, searchMax: 420 };
   const UI = isMobile ? UI_SP : UI_PC;
 
-  const LEGEND_PC = { font: 15, swatch: 20, pad: "12px 20px", line: 2.0 };
-  const LEGEND_SP = { font: 13, swatch: 16, pad: "10px 14px", line: 1.8 };
+  // ============================================================
+  // 🎨 凡例の見た目
+  // ★2026-07-30：Gボタンの「目撃情報を報告する」の箱と揃えた★
+  //   pad・font・角の丸み・文字色を同じにしてあるので、閉じた状態の
+  //   高さがGボタンのラベルとぴったり並ぶ。
+  //   ★page.tsx 側のラベルを変えたら、ここも同じ数字に合わせること★
+  //     page.tsx: padding "14px 18px" / fontSize 14 / borderRadius 10
+  // ============================================================
+  const LEGEND_PC = { font: 15, swatch: 20, pad: "14px 18px", line: 2.0, radius: 10 };
+  const LEGEND_SP = { font: 14, swatch: 16, pad: "14px 18px", line: 1.6, radius: 10 };
+  // 見出し「目撃件数」と▶の色。Gボタンの文字色と同じにしてある。
+  const LEGEND_HEAD_COLOR = "#292524";
   // ★凡例を最初から閉じた状態にしたいときは、ここを true にする。
   //   （投稿が増えて画面が賑やかになったら閉じる想定。今は開いたまま）
   const [legendCollapsed, setLegendCollapsed] = useState(false);
@@ -2703,7 +2706,6 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         // 期間フィルター（段階3）。全期間ならnullが渡る。
         const { rows, error } = await fetchTiles(
           map,
-          mapContainerRef.current,
           tileZ,
           periodFromRef.current,
           isCloudZoom ? TILE_VIEWPORT_RATIO_FOG : TILE_VIEWPORT_RATIO_ICON
@@ -3744,7 +3746,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
           bottom: UI.bottom,
           left: UI.edge,
           background: "white",
-          borderRadius: 8,
+          borderRadius: isMobile ? LEGEND_SP.radius : LEGEND_PC.radius,
           padding: isMobile ? LEGEND_SP.pad : LEGEND_PC.pad,
           boxShadow: "0 2px 10px rgba(0,0,0,0.15)",
           fontSize: isMobile ? LEGEND_SP.font : LEGEND_PC.font,
@@ -3775,9 +3777,10 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
         >
           <span
             style={{
-              fontSize: (isMobile ? LEGEND_SP.font : LEGEND_PC.font) - 2,
-              color: "#78716C",
-              fontWeight: 700,
+              fontSize: isMobile ? LEGEND_SP.font : LEGEND_PC.font,
+              color: LEGEND_HEAD_COLOR,
+              fontWeight: 500,
+              lineHeight: 1.2,
             }}
           >
             目撃件数
@@ -3785,8 +3788,8 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
           {/* 矢印は目印だけ。押す判定は上の行ぜんぶが持っている */}
           <span
             style={{
-              fontSize: (isMobile ? LEGEND_SP.font : LEGEND_PC.font) + 3,
-              color: "#78716C",
+              fontSize: isMobile ? LEGEND_SP.font : LEGEND_PC.font,
+              color: LEGEND_HEAD_COLOR,
               lineHeight: 1,
               flexShrink: 0,
             }}
