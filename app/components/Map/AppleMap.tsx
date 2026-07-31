@@ -1982,7 +1982,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   //   すべて同じ高さになり、中の文字も同じ高さに並ぶ。
   const UI_BOX_H = 52;
 
-  const UI_SP = { edge: 12, rowH: 36, gap: 8, bottom: 33, searchMax: 9999 };
+  const UI_SP = { edge: 12, rowH: 36, gap: 8, bottom: 35, searchMax: 9999 };
   const UI_PC = { edge: 12, rowH: 36, gap: 8, bottom: 35, searchMax: 420 };
   const UI = isMobile ? UI_SP : UI_PC;
 
