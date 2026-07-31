@@ -1982,7 +1982,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   //   すべて同じ高さになり、中の文字も同じ高さに並ぶ。
   const UI_BOX_H = 52;
 
-  const UI_SP = { edge: 12, rowH: 36, gap: 8, bottom: 30, searchMax: 9999 };
+  const UI_SP = { edge: 12, rowH: 36, gap: 8, bottom: 34, searchMax: 9999 };
   const UI_PC = { edge: 12, rowH: 36, gap: 8, bottom: 35, searchMax: 420 };
   const UI = isMobile ? UI_SP : UI_PC;
 
@@ -1995,7 +1995,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   //     page.tsx: padding "14px 18px" / fontSize 14 / borderRadius 10
   // ============================================================
   const LEGEND_PC = { font: 15, swatch: 20, pad: "14px 18px", line: 2.0, radius: 10 };
-  const LEGEND_SP = { font: 14, swatch: 16, pad: "14px 18px", line: 1.6, radius: 10 };
+  const LEGEND_SP = { font: 14, swatch: 15, pad: "14px 18px", line: 1.8, radius: 10 };
   // 見出し「目撃件数」と▶の色。Gボタンの文字色と同じにしてある。
   const LEGEND_HEAD_COLOR = "#292524";
   // ★凡例を最初から閉じた状態にしたいときは、ここを true にする。
