@@ -58,7 +58,17 @@ interface MapHandle {
 const G_BOTTOM_SP = 30;
 const G_BOTTOM_PC = 35;
 const G_RIGHT = 12;
-const HEADER_PAD = 16;
+
+// ★ヘッダー（ゴキブリアイコン＋サイト名／ハンバーガーメニュー）の
+//   左右の余白。スマホとPCで別々に調整できる。
+//   ・数字を小さくする → 両端に寄る
+//   ・数字を大きくする → 中央に寄る
+//   ★地図上のボタン（AppleMap.tsx の UI_SP.edge / UI_PC.edge＝12）と
+//     同じにすると端が揃うが、ハンバーガーメニューは寄せすぎると
+//     押しにくくなるので、少し大きめにしてある。
+//   ★ハンバーガーの見た目の大きさ・当たり判定は HeaderMenu.tsx 側★
+const HEADER_PAD_SP = 16;
+const HEADER_PAD_PC = 16;
 
 // ★Gボタンの円の直径。ラベルの箱もこの高さに揃えるので、
 //   Gの文字と「目撃情報を報告する」の文字が必ず同じ高さに並ぶ。
@@ -300,8 +310,8 @@ export default function Home() {
           //   現在地）の端と視覚的に揃えた。数値は上の HEADER_PAD。
           //   ★ハンバーガーメニューを端に寄せすぎると押しにくくなるので、
           //     地図側の12ではなく16にしてある。押しにくければ上げること。
-          paddingLeft: HEADER_PAD,
-          paddingRight: HEADER_PAD,
+          paddingLeft: isMobileUI ? HEADER_PAD_SP : HEADER_PAD_PC,
+          paddingRight: isMobileUI ? HEADER_PAD_SP : HEADER_PAD_PC,
         }}
       >
         {/* ============================================================

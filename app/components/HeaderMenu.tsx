@@ -870,13 +870,13 @@ export default function HeaderMenu() {
           //   marginRight のマイナスは、当たり判定を広げつつ、見た目を
           //   画面の端に少し寄せるためのもの。地図側のボタン（端から12px）
           //   と視覚的に揃う。押しにくければ width/height を上げる。
-          width: 44,
+          width: 44,// 当たり判定の大きさ
           height: 44,
-          marginRight: -6,
+          marginRight: -7,// マイナスにすると右に寄る
           border: "none",
           background: "transparent",
           color: "#662510",
-          fontSize: 25,
+          fontSize: 25,// ☰ の見た目の大きさ
           fontWeight: 700,
           lineHeight: 1,
           cursor: "pointer",

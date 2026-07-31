@@ -1971,8 +1971,15 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   // ・rowH      … 上段の高さ。絞り込み・検索バー・現在地の3つが
   //               必ずこの高さ（＝丸ボタンの直径）になる。
   // ・gap       … 上段の部品どうしの間隔。
-  // ・bottom    … 凡例の下端からの距離。
-  //               ★page.tsx のGボタンの bottom と同じ数字にすること★
+  // ・bottom    … 凡例の下端からの距離。この値は凡例だけに効く。
+  //               ★page.tsx のGボタンの bottom と数字が違うのは意図的★
+  //                 Gの円には下に4pxずらした濃い影
+  //                 (page.tsx の boxShadow "0 4px 12px rgba(0,0,0,0.3)")
+  //                 が付いており、そのぶん円が下に伸びて見える。
+  //                 設定上は同じ位置でも、目には凡例が上に見えてしまう。
+  //                 そこで凡例側を数px下げて、見た目を揃えている。
+  //                 ＝数値のズレではなく、影に合わせた意図的な補正。
+  //                 ★Gの影を弱めるなら、この値もGと同じに戻すこと★
   // ・searchMax … 検索バーの最大幅(px)。PCで伸びすぎるのを防ぐ。
   //               スマホは画面が狭いので大きめ＝実質無制限にしてある。
   // ============================================================
@@ -1982,7 +1989,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   //   すべて同じ高さになり、中の文字も同じ高さに並ぶ。
   const UI_BOX_H = 52;
 
-  const UI_SP = { edge: 12, rowH: 36, gap: 8, bottom: 34, searchMax: 9999 };
+  const UI_SP = { edge: 12, rowH: 36, gap: 8, bottom: 30, searchMax: 9999 };
   const UI_PC = { edge: 12, rowH: 36, gap: 8, bottom: 35, searchMax: 420 };
   const UI = isMobile ? UI_SP : UI_PC;
 
@@ -1994,8 +2001,8 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   //   ★page.tsx 側のラベルを変えたら、ここも同じ数字に合わせること★
   //     page.tsx: padding "14px 18px" / fontSize 14 / borderRadius 10
   // ============================================================
+  const LEGEND_SP = { font: 14, swatch: 16, pad: "14px 18px", line: 1.8, radius: 10 };
   const LEGEND_PC = { font: 15, swatch: 20, pad: "14px 18px", line: 2.0, radius: 10 };
-  const LEGEND_SP = { font: 14, swatch: 15, pad: "14px 18px", line: 1.8, radius: 10 };
   // 見出し「目撃件数」と▶の色。Gボタンの文字色と同じにしてある。
   const LEGEND_HEAD_COLOR = "#292524";
   // ★凡例を最初から閉じた状態にしたいときは、ここを true にする。
