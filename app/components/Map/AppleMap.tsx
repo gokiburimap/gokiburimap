@@ -1976,6 +1976,12 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   // ・searchMax … 検索バーの最大幅(px)。PCで伸びすぎるのを防ぐ。
   //               スマホは画面が狭いので大きめ＝実質無制限にしてある。
   // ============================================================
+  // ★下段の箱の高さ。Gボタンの円の直径と同じ数字にすること★
+  //   page.tsx の G_SIZE と必ず揃える。ここが同じなら、
+  //   「目撃件数」の箱・「目撃情報を報告する」の箱・Gの円が
+  //   すべて同じ高さになり、中の文字も同じ高さに並ぶ。
+  const UI_BOX_H = 52;
+
   const UI_SP = { edge: 12, rowH: 36, gap: 8, bottom: 30, searchMax: 9999 };
   const UI_PC = { edge: 12, rowH: 36, gap: 8, bottom: 35, searchMax: 420 };
   const UI = isMobile ? UI_SP : UI_PC;
@@ -1988,8 +1994,8 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   //   ★page.tsx 側のラベルを変えたら、ここも同じ数字に合わせること★
   //     page.tsx: padding "14px 18px" / fontSize 14 / borderRadius 10
   // ============================================================
-  const LEGEND_PC = { font: 15, swatch: 20, pad: "14px 18px", line: 2.0, radius: 10 };
-  const LEGEND_SP = { font: 14, swatch: 16, pad: "14px 18px", line: 1.6, radius: 10 };
+  const LEGEND_PC = { font: 15, swatch: 15, pad: "14px 18px", line: 1.8, radius: 10 };
+  const LEGEND_SP = { font: 14, swatch: 14, pad: "14px 18px", line: 1.6, radius: 10 };
   // 見出し「目撃件数」と▶の色。Gボタンの文字色と同じにしてある。
   const LEGEND_HEAD_COLOR = "#292524";
   // ★凡例を最初から閉じた状態にしたいときは、ここを true にする。
@@ -3747,7 +3753,11 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
           left: UI.edge,
           background: "white",
           borderRadius: isMobile ? LEGEND_SP.radius : LEGEND_PC.radius,
-          padding: isMobile ? LEGEND_SP.pad : LEGEND_PC.pad,
+          // ★2026-07-30：上下の余白で高さを合わせる方式をやめた。
+          //   文字の行の高さに左右されて、Gボタンの箱と揃わなかったため。
+          //   見出しの行の高さを UI_BOX_H に固定する方式に変更（下を参照）。
+          //   左右の余白だけをここで持ち、開いたときは下側にも余白を足す。
+          padding: legendCollapsed ? "0 18px" : "0 18px 14px",
           boxShadow: "0 2px 10px rgba(0,0,0,0.15)",
           fontSize: isMobile ? LEGEND_SP.font : LEGEND_PC.font,
           color: "#292524",
@@ -3767,15 +3777,14 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
           style={{
             display: "flex",
             alignItems: "center",
-            // ★2026-07-30：閉じているときは中央寄せにする。
-            //   開いているときは色見本の一覧が下に続くので、見出しは
-            //   左、矢印は右（space-between）のほうが読みやすい。
-            //   閉じているとその2つだけになるので、真ん中に置く。
+            // ★閉じているときは中央寄せ。開いているときは色見本が下に
+            //   続くので、見出し左・矢印右のほうが読みやすい。
             justifyContent: legendCollapsed ? "center" : "space-between",
-            gap: legendCollapsed ? 6 : 8,
-            marginBottom: legendCollapsed ? 0 : 4,
-            padding: "6px 0",
-            margin: "-6px 0",
+            gap: 8,
+            // ★高さを UI_BOX_H に固定する。これでGボタンの箱と必ず
+            //   同じ高さになり、中の文字も同じ高さに並ぶ。
+            //   行全体が押せるので、当たり判定も52px分ある。
+            height: UI_BOX_H,
             cursor: "pointer",
           }}
         >
@@ -3789,17 +3798,21 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
           >
             目撃件数
           </span>
-          {/* 矢印は目印だけ。押す判定は上の行ぜんぶが持っている */}
-          <span
+          {/* ★2026-07-30：矢印を文字(▸)から図形(SVG)に変えた。
+              文字の三角は、書体によって上下の位置が微妙にずれる。
+              図形なら必ず真ん中に来る。押す判定は行ぜんぶが持っている。
+              閉じているとき＝右向き、開いているとき＝下向き。 */}
+          <svg
+            width="11" height="11" viewBox="0 0 24 24"
+            fill={LEGEND_HEAD_COLOR}
             style={{
-              fontSize: isMobile ? LEGEND_SP.font : LEGEND_PC.font,
-              color: LEGEND_HEAD_COLOR,
-              lineHeight: 1,
+              display: "block",
               flexShrink: 0,
+              transform: legendCollapsed ? "none" : "rotate(90deg)",
             }}
           >
-            {legendCollapsed ? "▸" : "▾"}
-          </span>
+            <path d="M8 4l10 8-10 8z" />
+          </svg>
         </div>
 
         {!legendCollapsed &&

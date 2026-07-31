@@ -60,6 +60,12 @@ const G_BOTTOM_PC = 35;
 const G_RIGHT = 12;
 const HEADER_PAD = 16;
 
+// ★Gボタンの円の直径。ラベルの箱もこの高さに揃えるので、
+//   Gの文字と「目撃情報を報告する」の文字が必ず同じ高さに並ぶ。
+//   ★AppleMap.tsx の UI_BOX_H と必ず同じ数字にすること★
+//     （そうすると凡例の箱とも高さが揃う）
+const G_SIZE = 52;
+
 // 波紋の広がり。Gボタン(52px)に対する倍率。
 // ★大きくすると画面の端で切れる★ 1.5だと右端で1pxほど欠けたため1.35にした。
 const PULSE_SCALE = 1.35;
@@ -494,11 +500,9 @@ export default function Home() {
       bottom: `${isMobileUI ? G_BOTTOM_SP : G_BOTTOM_PC}px`,
       right: `${G_RIGHT}px`,
       display: "flex",
-      // ★2026-07-30：中央揃え(center)から下端揃え(flex-end)に変更。
-      //   丸ボタン(52px)とラベル(約45px)の高さが違うため、中央揃えだと
-      //   ラベルの下端だけが3.5px浮き、凡例の下端と揃わなかった。
-      //   下端揃えにすると、丸ボタン・ラベル・凡例の3つが同じ高さに並ぶ。
-      alignItems: "flex-end",
+      // ★2026-07-30：ラベルの箱と円をどちらも G_SIZE の高さに固定した
+      //   ので、上端も下端も自動的に揃う。凡例の箱も同じ高さ。
+      alignItems: "center",
       gap: "10px",
       zIndex: 500,
     }}
@@ -516,7 +520,13 @@ export default function Home() {
       style={{
         background: "#ffffff",
         borderRadius: "10px",
-        padding: "14px 18px",
+        // ★2026-07-30：上下の余白で高さを作る方式をやめ、円と同じ
+        //   高さに固定した。文字は上下中央に置かれるので、Gの文字と
+        //   同じ高さに並ぶ。凡例の箱とも高さが一致する。
+        height: `${G_SIZE}px`,
+        display: "flex",
+        alignItems: "center",
+        padding: "0 18px",
         boxShadow: "0 2px 14px rgba(0,0,0,0.1)",
         whiteSpace: "nowrap",
       }}
@@ -527,7 +537,7 @@ export default function Home() {
     </div>
 
     {/* ボタン部分 */}
-    <div style={{ position: "relative", width: "52px", height: "52px" }}>
+    <div style={{ position: "relative", width: `${G_SIZE}px`, height: `${G_SIZE}px` }}>
       {/* 波紋アニメーション */}
       <div
         style={{
