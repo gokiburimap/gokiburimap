@@ -1931,7 +1931,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   //               下に伸びて見えるぶんを合わせた意図的な補正。
   const UI_BOX_H = 52;
 
-  const UI_SP = { edge: 12, rowH: 36, gap: 8, bottom: 34, searchMax: 9999 };
+  const UI_SP = { edge: 12, rowH: 36, gap: 8, bottom: 35, searchMax: 9999 };
   const UI_PC = { edge: 12, rowH: 36, gap: 8, bottom: 35, searchMax: 420 };
   const UI = isMobile ? UI_SP : UI_PC;
 
@@ -1946,7 +1946,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   // font=見出し「目撃件数」の文字 / bodyFont=色見本のラベル
   // swatch=色見本の四角 / line=行間 / openHeadH=見出しと1行目の距離
   // ★font と radius は閉じたときの見た目を決める。他は開いたときだけ効く。
-  const LEGEND_SP = { font: 14, bodyFont: 14, swatch: 12, line: 1.6, radius: 10, openHeadH: 31 };
+  const LEGEND_SP = { font: 14, bodyFont: 14, swatch: 12, line: 1.5, radius: 10, openHeadH: 30 };
   const LEGEND_PC = { font: 15, bodyFont: 14, swatch: 16, line: 1.8, radius: 10, openHeadH: 38 };
   // 見出し「目撃件数」と▶の色。Gボタンの文字色と同じにしてある。
   const LEGEND_HEAD_COLOR = "#292524";
@@ -3607,19 +3607,50 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
             </div>
           )}
 
-          {/* 🔍 住所検索バー。
-              PCでは伸びすぎるので UI.searchMax で上限をつけ、
-              左右のボタンの間で中央に置く。スマホは上限を実質無しに
-              してあるので、今まで通り幅いっぱいに広がる。 */}
-          <div style={{
-            flex: 1, minWidth: 0, display: "flex", justifyContent: "center",
-          }}>
-            <SearchBar
-              onSearch={handleSearch}
-              height={UI.rowH}
-              maxWidth={UI.searchMax}
-            />
-          </div>
+          {/* ============================================================
+              🔍 住所検索バー
+              
+              ★スマホとPCで置き方が違う★
+              
+              【スマホ】残り幅いっぱいに広げる。画面が狭く、絞り込みが
+                横に伸びたら検索バーが押し縮められる、という関係で正しい。
+              
+              【PC】画面の真ん中に固定する。
+                以前は「左右のボタンの間の中央」に置いていたため、
+                絞り込みボタンが期間を選んで横に伸びると、その分だけ
+                検索バーも右にずれていた。画面の中央にあるものが
+                操作のたびに動くのは望ましくないので、位置を固定した。
+                幅に余裕があるPCでは、ボタンと重なることもない。
+             ============================================================ */}
+          {isMobile ? (
+            <div style={{
+              flex: 1, minWidth: 0, display: "flex", justifyContent: "center",
+            }}>
+              <SearchBar
+                onSearch={handleSearch}
+                height={UI.rowH}
+                maxWidth={UI.searchMax}
+              />
+            </div>
+          ) : (
+            <div
+              style={{
+                position: "absolute",
+                left: "50%",
+                transform: "translateX(-50%)",
+                width: "100%",
+                maxWidth: UI.searchMax,
+                display: "flex",
+                justifyContent: "center",
+              }}
+            >
+              <SearchBar
+                onSearch={handleSearch}
+                height={UI.rowH}
+                maxWidth={UI.searchMax}
+              />
+            </div>
+          )}
 
           {/* 📍 現在地ボタン */}
           <button
@@ -3629,6 +3660,11 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
             title="現在地を表示"
             style={{
               flexShrink: 0,
+              // ★PCでは検索バーが「浮いた」配置になり、現在地ボタンを
+              //   右へ押し出すものが無くなるため、自分で右端へ寄る。
+              //   スマホでは検索バーが幅いっぱいに広がるので、この指定は
+              //   何も起こさない（余った空間が無いため）。
+              marginLeft: "auto",
               width: UI.rowH,
               height: UI.rowH,
               borderRadius: "50%",
