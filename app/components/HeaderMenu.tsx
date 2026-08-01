@@ -31,7 +31,7 @@ const PANEL_CONTENT_MAX_WIDTH = 640;
 // ★2026-07-26：使い方ガイドからも参照するようになったため、
 //   ファイル上部に移動した（旧：プライバシーポリシー本文の直前）。
 // ------------------------------------------------------------
-const CONTACT_EMAIL = "gokiburimap@gmail.com";
+const CONTACT_EMAIL = "ninomae.gokiburimap@gmail.com";
 
 // メールアドレスだけは選択・コピーできるようにする（下の指定を打ち消す）
 const SELECTABLE = {
@@ -676,8 +676,11 @@ function AboutContent() {
               width: 56,
               height: 56,
               borderRadius: "50%",
-              background: "#fff",
-              border: "1px solid #eee",
+              // ★白い円に白背景の画像だと、円が薄い枠線でしか見えず
+              //   「丸の中に絵が浮いている」印象になる。ブランドカラーを
+              //   ごく薄く敷いて、丸を意味のある形として立たせる。
+              background: "#F5EFEC",
+              border: "1px solid #E7E0DC",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -685,17 +688,17 @@ function AboutContent() {
               flexShrink: 0,
             }}
           >
-            <img src="/roach-icon.png" alt="" style={{ width: 32, height: 32, objectFit: "contain" }} />
+            {/* ★32pxだと円の面積の3分の1しか使わず、余白が目立つ。
+                42pxで円いっぱいに近づく。触角が切れない範囲の上限。 */}
+            <img src="/roach-icon.png" alt="" style={{ width: 42, height: 42, objectFit: "contain" }} />
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            <span style={{ fontSize: 14, fontWeight: 700, color: "#292524" }}>
-              ゴキブリマップ運営　ゴキ
-            </span>
-            {/* ★ここにお問い合わせ用アドレス・note等のURLを入れる（2行目） */}
-            <span style={{ fontSize: 12, color: "#78716C" }}>
-              （ここにアドレス・URLを記載）
-            </span>
-          </div>
+          {/* ★1行だけなので、アイコンの円に対して上下中央に来る。
+              2行目（アドレス・URL等）を足す場合は、この span の下に
+              <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
+              で包み直し、span を2つ並べればよい。 */}
+          <span style={{ fontSize: 14, fontWeight: 700, color: "#292524" }}>
+            ゴキブリマップ運営　にのまえ
+          </span>
         </div>
       </Box>
     </>
