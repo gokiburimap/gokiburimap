@@ -1,20 +1,34 @@
 // ============================================================
 // /api/admin/sheet
 //
-// スプレッドシート（Google Apps Script）から投稿を読み書きするためのAPI。
-// 管理画面での目視チェックの代わりに、シート上で確認・整理するための入口。
+// スプレッドシート（Google Apps Script）へ投稿を渡すためのAPI。
+// 用途は「記録台帳」への追記のみ。
 //
-// ・GET    ：投稿を一覧で返す（既定1000件・?limit=／?since=で調整）。
-//            シートに取り込みやすいよう、住所・詳細も平らな形で返す。
-// ・POST   ：シート側の変更をまとめて反映する（一括更新）。
-//            body: { updates: [{ id, hidden?, checked? }, ...] }
-//            最大500件まで。
-// ・DELETE ：投稿の一括削除。body: { ids: [1,2,3] } 最大500件。
+// 【2026-08-01 変更】
+// 以前はシート上で非表示・確認済みの切り替えや削除ができたが、
+// その機能は廃止した（POST / DELETE を削除）。理由は次の3つ。
+//   ・投稿の確認・非表示・削除は、地図上の管理者モードで行うほうが
+//     位置が見えるぶん判断しやすく、投稿禁止エリアの設定とも地続き
+//   ・シートの「削除」列にチェックを入れて実行すると物理削除になり、
+//     取り消せない。誤操作の経路そのものを無くした
+//   ・シートの役割を「追記のみの記録台帳」に一本化することで、
+//     DBで投稿を削除しても記録が残る、という目的が達成できる
+//
+// ・GET のみ：投稿を古い順に返す。
+//     ?after=12345 … このid より大きい投稿だけを返す（追記に使う）
+//     ?limit=5000  … 一度に返す件数（既定1000／上限5000）
 //
 // 【認証】管理APIと同じ合言葉（x-admin-key ヘッダー）。
 //        GAS側では、スクリプトプロパティに合言葉を入れて送ること。
-//        ※このキーが漏れるとDBを操作されるため、シートとGASプロジェクトは
+//        ※このキーが漏れるとDBを読まれるため、シートとGASプロジェクトは
 //          絶対に他人と共有しないこと。
+//
+// 【返す項目】
+//   id / created_at / occurred_on / address / detail / lat / lng
+//   ★nearby_count は返さない。その時点の集計値であり、時間が経てば
+//     変わるため、記録として残す意味がないため。
+//   ★hidden / checked も返さない。台帳は「投稿された事実」の記録であり、
+//     その後の運用状態は記録の対象ではないため。
 // ============================================================
 import { NextRequest, NextResponse } from "next/server";
 import { getServiceClient } from "@/app/lib/supabase-server";
@@ -29,22 +43,29 @@ export async function GET(req: NextRequest) {
 
   const sp = req.nextUrl.searchParams;
   const limit = Math.min(Math.max(Number(sp.get("limit")) || 1000, 1), 5000);
-  const since = sp.get("since"); // 例: 2026-07-01（この日時以降の投稿だけ）
+
+  // ★この id より大きいものだけを返す。
+  //   シート側は「今シートにある最大のid」を渡してくるので、
+  //   まだ取り込んでいない投稿だけが返る。
+  //   0（または未指定）なら最初から。
+  const afterRaw = Number(sp.get("after"));
+  const after = Number.isInteger(afterRaw) && afterRaw > 0 ? afterRaw : 0;
 
   const supabase = getServiceClient();
-  let query = supabase
+
+  // ★昇順（古い順）で返す。
+  //   降順だと、上限に引っかかったときに「新しいほうだけ取れて、
+  //   途中が抜ける」という穴ができる。昇順なら、取れたところまでが
+  //   必ず連続する。次回はその続きから取れる。
+  const { data, error } = await supabase
     .from("reports")
     .select(
-      "id, created_at, occurred_on, lat, lng, nearby_count, checked, hidden, report_details(address, detail)"
+      "id, created_at, occurred_on, lat, lng, report_details(address, detail)"
     )
-    .order("id", { ascending: false })
+    .gt("id", after)
+    .order("id", { ascending: true })
     .limit(limit);
 
-  if (since) {
-    query = query.gte("created_at", since);
-  }
-
-  const { data, error } = await query;
   if (error) {
     console.error("シート用の投稿取得に失敗:", error);
     return NextResponse.json({ error: "internal_error" }, { status: 500 });
@@ -55,88 +76,18 @@ export async function GET(req: NextRequest) {
     id: r.id,
     created_at: r.created_at,
     occurred_on: r.occurred_on,
-    lat: r.lat,
-    lng: r.lng,
-    nearby_count: r.nearby_count,
-    checked: r.checked === true,
-    hidden: r.hidden === true,
     address: r.report_details?.address ?? "",
     detail: r.report_details?.detail ?? "",
+    lat: r.lat,
+    lng: r.lng,
   }));
 
-  return NextResponse.json({ rows, count: rows.length });
-}
-
-export async function POST(req: NextRequest) {
-  if (!isAdmin(req)) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
-
-  let body: any;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "invalid_json" }, { status: 400 });
-  }
-
-  const updates = body?.updates;
-  if (!Array.isArray(updates) || updates.length === 0 || updates.length > 500) {
-    return NextResponse.json({ error: "invalid_params" }, { status: 400 });
-  }
-
-  const supabase = getServiceClient();
-  let applied = 0;
-  const failed: number[] = [];
-
-  for (const u of updates) {
-    const id = Number(u?.id);
-    if (!Number.isInteger(id) || id <= 0) continue;
-
-    const patch: { checked?: boolean; hidden?: boolean } = {};
-    if (typeof u?.checked === "boolean") patch.checked = u.checked;
-    if (typeof u?.hidden === "boolean") patch.hidden = u.hidden;
-    if (Object.keys(patch).length === 0) continue;
-
-    const { error } = await supabase.from("reports").update(patch).eq("id", id);
-    if (error) {
-      failed.push(id);
-    } else {
-      applied += 1;
-    }
-  }
-
-  return NextResponse.json({ ok: true, applied, failed });
-}
-
-export async function DELETE(req: NextRequest) {
-  if (!isAdmin(req)) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
-
-  let body: any;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "invalid_json" }, { status: 400 });
-  }
-
-  const ids = body?.ids;
-  if (!Array.isArray(ids) || ids.length === 0 || ids.length > 500) {
-    return NextResponse.json({ error: "invalid_params" }, { status: 400 });
-  }
-  const cleanIds = ids
-    .map((v: any) => Number(v))
-    .filter((v: number) => Number.isInteger(v) && v > 0);
-  if (cleanIds.length === 0) {
-    return NextResponse.json({ error: "invalid_params" }, { status: 400 });
-  }
-
-  const supabase = getServiceClient();
-  const { error } = await supabase.from("reports").delete().in("id", cleanIds);
-  if (error) {
-    console.error("シートからの一括削除に失敗:", error);
-    return NextResponse.json({ error: "internal_error" }, { status: 500 });
-  }
-
-  return NextResponse.json({ ok: true, deleted: cleanIds.length });
+  // hasMore：まだ続きがあるかどうか。
+  // 上限ぴったりの件数が返ったときは、続きがある可能性が高い。
+  // GAS側はこれを見て、続きを取りに来る。
+  return NextResponse.json({
+    rows,
+    count: rows.length,
+    hasMore: rows.length >= limit,
+  });
 }
