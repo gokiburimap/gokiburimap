@@ -1931,7 +1931,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   //               下に伸びて見えるぶんを合わせた意図的な補正。
   const UI_BOX_H = 52;
 
-  const UI_SP = { edge: 12, rowH: 36, gap: 8, bottom: 35, searchMax: 9999 };
+  const UI_SP = { edge: 12, rowH: 36, gap: 8, bottom: 34, searchMax: 9999 };
   const UI_PC = { edge: 12, rowH: 36, gap: 8, bottom: 35, searchMax: 420 };
   const UI = isMobile ? UI_SP : UI_PC;
 
@@ -1946,7 +1946,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
   // font=見出し「目撃件数」の文字 / bodyFont=色見本のラベル
   // swatch=色見本の四角 / line=行間 / openHeadH=見出しと1行目の距離
   // ★font と radius は閉じたときの見た目を決める。他は開いたときだけ効く。
-  const LEGEND_SP = { font: 14, bodyFont: 14, swatch: 12, line: 1.5, radius: 10, openHeadH: 30 };
+  const LEGEND_SP = { font: 14, bodyFont: 14, swatch: 12, line: 1.6, radius: 10, openHeadH: 31 };
   const LEGEND_PC = { font: 15, bodyFont: 14, swatch: 16, line: 1.8, radius: 10, openHeadH: 38 };
   // 見出し「目撃件数」と▶の色。Gボタンの文字色と同じにしてある。
   const LEGEND_HEAD_COLOR = "#292524";
@@ -1974,6 +1974,39 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
 
   const [locating, setLocating] = useState(false);
   const [locateError, setLocateError] = useState<string | null>(null);
+
+  // ============================================================
+  // 📏 検索バーを「画面の中央に固定」してよい幅かどうか（2026-08-01）
+  //
+  // 【なぜ必要か】
+  // スマホ／PCの判定は起動時に1回だけ行い、以後変わらない。そのため
+  // PCでウィンドウを狭めても配置がPCのままで、中央固定の検索バーに
+  // 両端のボタンが重なっていた（絞り込みが検索バーの下に潜り込む）。
+  //
+  // 【対策】幅を見張り、狭いときはスマホと同じ「押し縮める」並べ方に戻す。
+  // 判定はこの検索バーの置き方だけに使う。凡例の大きさやズーム制限など、
+  // 他の設定は起動時のままで動かさない（途中で変わると混乱するため）。
+  //
+  // ★数値の根拠★
+  //   検索バーの最大幅(420) ＋ 絞り込み(文字が出ると最大約110)
+  //   ＋ 現在地(36) ＋ 部品の間隔(8×2) ＋ 画面端(12×2) ＋ 余裕
+  //   ＝ おおよそ700px。UI_PC.searchMax を変えたらここも見直すこと。
+  // ============================================================
+  const SEARCH_CENTER_MIN_WIDTH = 700;
+  const [wideEnough, setWideEnough] = useState(true);
+  useEffect(() => {
+    const check = () =>
+      setWideEnough(
+        typeof window !== "undefined" &&
+          window.innerWidth >= SEARCH_CENTER_MIN_WIDTH
+      );
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // 中央固定にしてよいのは「PC扱い」かつ「幅に余裕がある」ときだけ
+  const centerSearch = !isMobile && wideEnough;
 
   // ============================================================
   // 🚫 投稿の流れに入っている間は、現在地ボタンを出さない（2026-07-29）
@@ -3481,7 +3514,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
           {/* 🗓 期間フィルター。パネルはこの帯の下に開くので、
               検索バーとぶつからない。 */}
           {tileMode && (
-            <div style={{ position: "relative", flexShrink: 0 }}>
+            <div style={{ position: "relative", flexShrink: 0, zIndex: 2 }}>
               <button
                 type="button"
                 onClick={() => setFilterOpen((v) => !v)}
@@ -3622,7 +3655,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
                 操作のたびに動くのは望ましくないので、位置を固定した。
                 幅に余裕があるPCでは、ボタンと重なることもない。
              ============================================================ */}
-          {isMobile ? (
+          {!centerSearch ? (
             <div style={{
               flex: 1, minWidth: 0, display: "flex", justifyContent: "center",
             }}>
