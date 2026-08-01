@@ -93,7 +93,7 @@ declare global {
   }
 }
 
-const ZOOM_THRESHOLD = 0.01;
+const ZOOM_THRESHOLD = 0.009;
 const MAX_CLUSTER_ZOOM = 20;
 
 // ============================================================
@@ -401,7 +401,7 @@ function seededRandom(seed: number) {
 // 問題（不正確な表示による誤解）を生むため。
 // 【初期値】4m
 // ============================================================
-const OFFSET_MAX_METERS = 5;
+const OFFSET_MAX_METERS = 1;
 
 // ============================================================
 // 🌫️ 霧調整エリア（2026-07-22 追加）
@@ -2586,7 +2586,7 @@ const AppleMap = forwardRef<AppleMapHandle, AppleMapProps>(function AppleMap(
       //     50m … 霧の直径700px（上限に張り付く）
       //     80m … 652px ／ 100m … 522px ／ 150m … 348px
       //   ★上げるほど建物を特定しにくくなり、法的リスク対策は強まる★
-      const MIN_CAMERA_DISTANCE_METERS_SP = 70;
+      const MIN_CAMERA_DISTANCE_METERS_SP = 80;
       const isMobileInit = typeof window !== "undefined" && window.innerWidth < 768;
       map.cameraZoomRange = new window.mapkit.CameraZoomRange(
         isMobileInit ? MIN_CAMERA_DISTANCE_METERS_SP : MIN_CAMERA_DISTANCE_METERS_PC
