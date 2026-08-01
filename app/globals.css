@@ -43,7 +43,12 @@ body {
        上の padding(12) × 2 ＋ ハンバーガーの高さ(44) ＝ 68
      HeaderMenu.tsx のボタンの width/height を変えたら、
      ここも同じ計算で直すこと。 */
-  min-height: 68px;
+  /* ★min-height ではなく height で固定する。
+     min-height だと「これ以上は縮まない」だけなので、中身が
+     68pxより高くなれば伸びる。height なら常にこの高さで動かない。
+     ★PCでも同じ指定が効く（下のメディアクエリは padding だけを
+       上書きしており、高さは触っていない）。 */
+  height: 68px;
   box-sizing: border-box;
 }
 

@@ -305,7 +305,11 @@ export default function Home() {
             HeaderMenu.tsx に分離。項目の増減はそちらのMENU_ITEMSを編集。
            ============================================================ */}
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <img src="/roach-icon.png" alt="" style={{ height: "22px", width: "auto" }} />
+          {/* ★幅を明示する。auto のままだと、画像が読み込まれるまで幅0で
+              描かれ、読み込み完了と同時にサイト名が右へずれる。
+              16px = 高さ22px × 画像の縦横比(490:677)。
+              高さを変えたら、幅も 高さ×0.724 で計算し直すこと。 */}
+          <img src="/roach-icon.png" alt="" style={{ height: "22px", width: "16px" }} />
           <h1 style={{ margin: 0, fontSize: "20px", fontWeight: "bold", color: "#292524" }}>
             ゴキブリマップ
           </h1>
