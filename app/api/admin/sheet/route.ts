@@ -53,26 +53,57 @@ export async function GET(req: NextRequest) {
 
   const supabase = getServiceClient();
 
-  // ★昇順（古い順）で返す。
-  //   降順だと、上限に引っかかったときに「新しいほうだけ取れて、
-  //   途中が抜ける」という穴ができる。昇順なら、取れたところまでが
-  //   必ず連続する。次回はその続きから取れる。
-  const { data, error } = await supabase
-    .from("reports")
-    .select(
-      "id, created_at, occurred_on, lat, lng, report_details(address, detail)"
-    )
-    .gt("id", after)
-    .order("id", { ascending: true })
-    .limit(limit);
+  // ============================================================
+  // ★2026-08-01 修正：Supabaseの1回あたりの行数上限に対応
+  //
+  // 【何が起きていたか】
+  // Supabaseには「1回のリクエストで返す行数」の上限があり、既定で
+  // 1000行。コードで .limit(2000) と書いても、その上は返らない。
+  // そのため limit を大きくしても常に1000件で頭打ちになっていた。
+  //
+  // 【対策】1000件ずつ何度かに分けて取り、こちらでつなげてから返す。
+  // 呼び出し側（GAS）から見れば、指定した件数がそのまま返る。
+  //
+  // ★Supabase側の設定でこの上限は変更できるが、設定に依存する作りに
+  //   すると、設定を戻したときに静かに壊れる。コード側で吸収しておく。
+  // ============================================================
+  const PAGE = 1000; // Supabaseが1回で返せる行数
+  const collected: any[] = [];
+  let cursor = after;
 
-  if (error) {
-    console.error("シート用の投稿取得に失敗:", error);
-    return NextResponse.json({ error: "internal_error" }, { status: 500 });
+  while (collected.length < limit) {
+    const take = Math.min(PAGE, limit - collected.length);
+
+    // ★昇順（古い順）で取る。
+    //   降順だと、上限に引っかかったときに「新しいほうだけ取れて、
+    //   途中が抜ける」という穴ができる。昇順なら、取れたところまでが
+    //   必ず連続する。次回はその続きから取れる。
+    const { data, error } = await supabase
+      .from("reports")
+      .select(
+        "id, created_at, occurred_on, lat, lng, report_details(address, detail)"
+      )
+      .gt("id", cursor)
+      .order("id", { ascending: true })
+      .limit(take);
+
+    if (error) {
+      console.error("シート用の投稿取得に失敗:", error);
+      return NextResponse.json({ error: "internal_error" }, { status: 500 });
+    }
+
+    const batch = data ?? [];
+    collected.push(...batch);
+
+    // 頼んだ数より少なければ、もう続きは無い
+    if (batch.length < take) break;
+
+    // 次はこの続きから
+    cursor = batch[batch.length - 1].id;
   }
 
   // シートに貼りやすいよう、住所・詳細を平らにして返す
-  const rows = (data ?? []).map((r: any) => ({
+  const rows = collected.map((r: any) => ({
     id: r.id,
     created_at: r.created_at,
     occurred_on: r.occurred_on,
