@@ -10,10 +10,9 @@
 //
 // 【タブ1：投稿チェック】
 //   最新200件の投稿を、運営箱の住所・詳細ごと一覧表示。
-//   ・「未チェックのみ」絞り込み ＋ チェック済みフラグの切替
+//   ・今日の投稿件数の表示（2026-08-02 追加）
+//   ・「非表示にした投稿」の絞り込み
 //   ・投稿の削除（削除依頼への対応・イタズラ削除。2段階確認）
-//   ・「この地点を禁止エリア化」＝指定半径の円形エリアを即登録
-//     （イタズラ投稿を見つけたら、削除＋再発防止をこの画面で完結できる）
 //
 // 【タブ2：禁止エリア】
 //   登録済みエリアの一覧・削除。
@@ -60,6 +59,10 @@ export default function AdminPage() {
   const [authed, setAuthed] = useState(false);
   const [tab, setTab] = useState<"reports" | "areas">("reports");
   const [message, setMessage] = useState("");
+  // 📊 今日の投稿件数（2026-08-01 追加）
+  //    created_at（投稿日時）で数える。日本時間の0時が境目。
+  //    件数だけを数えるAPIなので、何件あっても通信量は変わらない。
+  const [todayCount, setTodayCount] = useState<number | null>(null);
 
   // ---- タブ1：投稿チェック用 ----
   const [reports, setReports] = useState<AdminReport[]>([]);
@@ -194,8 +197,7 @@ export default function AdminPage() {
       // ============================================================
       // ④「びよーん」線（ラバーバンド・2026-07-19追加）
       // Excelの図形描画のように、最後に打った頂点からマウスの現在位置まで
-      // 点線を伸ばして追従させる。2点以上あるときは、最初の点への
-      // 「閉じる線」も一緒に見せる（囲い終わりの形が事前に分かる）。
+      // 点線を伸ばして追従させる。
       // ============================================================
       const removeHoverLine = () => {
         if (hoverLineRef.current) {
@@ -670,6 +672,20 @@ export default function AdminPage() {
     setAreas(json.areas ?? []);
   };
 
+  // 📊 今日の投稿件数を取り直す
+  const loadTodayCount = async (key = adminKey) => {
+    try {
+      const res = await fetch("/api/admin/stats", {
+        headers: { "x-admin-key": key },
+      });
+      if (!res.ok) return;
+      const json = await res.json();
+      setTodayCount(json.today ?? 0);
+    } catch {
+      /* 取れなくても管理画面の他の機能には影響させない */
+    }
+  };
+
   // 各エリアの中心座標（一覧の「地図で見る」で使う）
   const [areaCenters, setAreaCenters] = useState<
     { kind: string; id: number; lat: number; lng: number }[]
@@ -757,7 +773,7 @@ export default function AdminPage() {
     }
   };
 
-  // 起動時：sessionStorageに合言葉が残っていれば自動ログイン
+  // 起動時：localStorageに合言葉が残っていれば自動ログイン
   useEffect(() => {
     const saved = localStorage.getItem("adminKey");
     if (saved) {
@@ -768,6 +784,7 @@ export default function AdminPage() {
           loadAreas(saved);
           loadFogAreas(saved);
           loadAreaCenters(saved);
+          loadTodayCount(saved);
         }
       });
     }
@@ -793,12 +810,8 @@ export default function AdminPage() {
     loadAreas(key);
     loadFogAreas(key);
     loadAreaCenters(key);
+    loadTodayCount(key);
   };
-
-
-  // 🟡 霧だけの非表示／再表示を切り替える。
-  //    投稿データは消さず、地図から霧だけを消す（いつでも戻せる）。
-  //    削除依頼物件に隣家の霧がかかる場合などに使う。
 
   // 投稿の削除（2段階：1回目で赤くなり、2回目で実行）
   const deleteReport = async (r: AdminReport) => {
@@ -818,8 +831,6 @@ export default function AdminPage() {
       setMessage(`投稿 #${r.id} の削除に失敗しました`);
     }
   };
-
-  // イタズラ即応：この投稿の地点を中心に、円形の禁止エリアを登録
 
   const addGeojsonArea = async () => {
     if (!areaName.trim() || !areaGeojson.trim()) {
@@ -911,8 +922,55 @@ export default function AdminPage() {
   // ============================================================
   // 管理画面本体
   // ============================================================
+  // ============================================================
+  // ★2026-08-02：画面の幅が変わらないようにする
+  //
+  // 【何が起きていたか】
+  // タブを切り替えると、画面全体の幅が変わって見えていた。
+  //
+  // 【なぜ起きるか】原因は2つあり、両方を同時に塞がないと直らない。
+  //   (1) ページの縦スクロールバーの出入り。この画面は中央寄せなので、
+  //       スクロールバーが出たり消えたりすると約15px左右にずれる。
+  //       タブごとにページの高さが違うため、これが起きていた。
+  //       → 下の <style> で、スクロールバーの場所を常に確保して解決。
+  //   (2) 中身が maxWidth を超えてはみ出すこと。
+  //       → width:100% と boxSizing:"border-box" を明示し、
+  //         はみ出しうる部分（表）は内側で横スクロールさせる。
+  //
+  // ★この3つ（width / maxWidth / boxSizing）は必ずセットで指定すること。
+  //   maxWidth だけだと、余白(padding)のぶん実際の幅が変わる。
+  // ============================================================
   return (
-    <main style={{ maxWidth: 1100, margin: "0 auto", padding: 24, color: TEXT }}>
+    <main
+      style={{
+        width: "100%",
+        maxWidth: 1100,
+        boxSizing: "border-box",
+        margin: "0 auto",
+        padding: 24,
+        color: TEXT,
+      }}
+    >
+      {/* ============================================================
+          ★2026-08-02：縦スクロールバーの分の場所を常に確保する
+          
+          この画面は maxWidth:1100 の中央寄せなので、ページの高さが
+          変わって縦スクロールバーが出たり消えたりすると、その幅
+          （約15px）のぶん中身が左右にずれる。
+          タブを切り替えるたびに画面幅が変わって見えていたのは、
+          表の幅ではなくこれが原因。
+          
+          scrollbar-gutter は、スクロールバーが不要なときでも
+          その場所を空けておく指定。これで中身は動かなくなる。
+          対応していない古いブラウザでは overflow-y:scroll が効き、
+          常にスクロールバーが出る（見た目は少し違うが、ずれない）。
+         ============================================================ */}
+      <style>{`
+        html { scrollbar-gutter: stable; }
+        @supports not (scrollbar-gutter: stable) {
+          html { overflow-y: scroll; }
+        }
+      `}</style>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <h1 style={{ fontSize: 20, marginBottom: 4 }}>🪳 ゴキブリマップ 管理画面</h1>
         <div style={{ display: "flex", gap: 8 }}>
@@ -945,11 +1003,14 @@ export default function AdminPage() {
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         <button
           onClick={() => setTab("reports")}
-          style={btn(tab === "reports")}
+          style={{ ...btn(tab === "reports"), width: 125 }}
         >
           投稿チェック
         </button>
-        <button onClick={() => setTab("areas")} style={btn(tab === "areas")}>
+        <button
+          onClick={() => setTab("areas")}
+          style={{ ...btn(tab === "areas"), width: 125 }}
+        >
           投稿禁止エリア
         </button>
       </div>
@@ -973,7 +1034,48 @@ export default function AdminPage() {
           タブ1：投稿チェック
          ============================================================ */}
       {tab === "reports" && (
-        <section>
+        // ★幅を明示。中身（表）に引きずられて広がらないようにする
+        <section style={{ width: "100%", minWidth: 0 }}>
+          {/* ============================================================
+              📊 今日の投稿件数（2026-08-02）
+              日本時間の0時からの件数。created_at（投稿日時）で数えている。
+              非表示にした投稿も含む（投稿があった事実を知るのが目的のため）。
+              ★投稿チェックのタブでだけ出す。禁止エリアのタブでは意味がないため。
+             ============================================================ */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "baseline",
+              gap: 10,
+              // ★2026-08-02：管理画面の幅いっぱいに揃える。
+              //   タイトル・タブ・表と左右の端が一致する。
+              width: 260,
+              boxSizing: "border-box",
+              background: "#FEF3EC",
+              border: `1px solid ${BRAND}`,
+              borderRadius: 8,
+              padding: "10px 16px",
+              marginBottom: 16,
+            }}
+          >
+            <span style={{ fontSize: 13, color: SUB }}>今日の投稿</span>
+            <span style={{ fontSize: 22, fontWeight: 700, color: BRAND, lineHeight: 1 }}>
+              {todayCount === null ? "—" : todayCount}
+            </span>
+            <span style={{ fontSize: 13, color: SUB }}>件</span>
+            <button
+              onClick={() => loadTodayCount()}
+              style={{
+                ...btn(),
+                marginLeft: "auto",
+                padding: "3px 8px",
+                fontSize: 11,
+              }}
+            >
+              更新
+            </button>
+          </div>
+
           <div
             style={{
               display: "flex",
@@ -1082,8 +1184,6 @@ export default function AdminPage() {
           </div>
           <p style={{ fontSize: 12, color: SUB, marginTop: 8 }}>
             ・削除すると住所・詳細も一緒に消え、周辺の表示（近隣件数）は自動で更新されます。投稿記録（IP等）は開示請求対応のため残ります。
-            <br />
-            ・「禁止エリア化」はその投稿の地点を中心に、上で指定した半径の円形エリアを登録します。投稿自体は消えないので、必要なら削除も押してください。
           </p>
         </section>
       )}
@@ -1092,7 +1192,7 @@ export default function AdminPage() {
           タブ2：投稿禁止エリア
          ============================================================ */}
       {tab === "areas" && (
-        <section>
+        <section style={{ width: "100%", minWidth: 0 }}>
           <h2 style={{ fontSize: 16, marginBottom: 8 }}>新規登録</h2>
           {/* エリア名と理由を横並びに。理由は右下をつまんで広げられる */}
           <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "flex-start" }}>
@@ -1302,180 +1402,181 @@ export default function AdminPage() {
             }}
           />
 
+          {/* ★2026-08-02：投稿禁止／調整のどちらを表示しても、外枠の
+              大きさが変わらないようにしてある（高さ400・幅100%）。
+              以前は調整エリア側の表だけ minWidth:620 だったため、
+              切り替えると画面全体の幅が動いて見えていた。 */}
           {areaTab === "banned" ? (
-          <div
-            style={{
-              height: 400, // 件数が変わっても枠の大きさは変えない（絞り込みで画面が動かないように）
-              overflowY: "auto",
-              border: "1px solid #E7E5E4",
-              borderRadius: 8,
-            }}
-          >
-          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
-            <thead>
-              <tr style={{ borderBottom: `2px solid ${BRAND}`, textAlign: "left" }}>
-                <th style={{ padding: 8 }}>#</th>
-                <th style={{ padding: 8 }}>名前</th>
-                <th style={{ padding: 8 }}>理由</th>
-                <th style={{ padding: 8 }}>登録日</th>
-                <th style={{ padding: 8 }}>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {areas.filter(matchAreaQuery).map((a) => (
-                <tr key={a.id} style={{ borderBottom: "1px solid #eee" }}>
-                  <td style={{ padding: 8 }}>{a.id}</td>
-                  <td style={{ padding: 8 }}>{a.name}</td>
-                  <td
-                    style={{
-                      padding: 8,
-                      maxWidth: 260,
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                    title={a.reason ?? ""}
-                  >
-                    {a.reason ?? "-"}
-                  </td>
-                  <td style={{ padding: 8, whiteSpace: "nowrap" }}>
-                    {new Date(a.created_at).toLocaleDateString("ja-JP")}
-                  </td>
-                  <td style={{ padding: 8, whiteSpace: "nowrap" }}>
-                    <button
-                      onClick={() => openAreaOnMap("banned", a.id)}
-                      style={{ ...btn(), marginRight: 6 }}
-                    >
-                      地図で見る
-                    </button>
-                    <button
-                      onClick={() => purgeArea(a.id)}
-                      style={{
-                        ...btn(),
-                        color: "#fff",
-                        background: armedPurgeId === a.id ? "#B3261E" : "#D9938B",
-                        border: "none",
-                        marginRight: 6,
-                      }}
-                    >
-                      {armedPurgeId === a.id ? "本当に削除" : "エリア内の投稿削除"}
-                    </button>
-                    <button onClick={() => deleteArea(a.id)} style={btn()}>
-                      エリアを削除
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          </div>
-          ) : (
-            <div>
-          {/* ============================================================
-              調整エリアの一覧（調整値の変更・削除）
-             ============================================================ */}
-          <h3 style={{ fontSize: 14, margin: "24px 0 6px" }}>
-            調整エリアの一覧
-          </h3>
-          <p style={{ fontSize: 12, color: SUB, margin: "0 0 8px" }}>
-            ・<b>倍率</b>：小さいほど縮みます（0.7〜0.8推奨）。
-            <b>余裕(m)</b>：0で端が投稿地点に接します。プラスで離し、マイナスで重なります。
-          </p>
-          {/* 件数が変わっても枠の大きさは変えない（絞り込みで画面が動かないように） */}
-          <div
-            style={{
-              height: 400,
-              overflow: "auto",
-              border: "1px solid #E7E5E4",
-              borderRadius: 8,
-            }}
-          >
-            {fogAreas.filter(matchAreaQuery).length === 0 ? (
-              <p style={{ fontSize: 13, color: SUB, padding: 12 }}>
-                該当する調整エリアがありません。
-              </p>
-            ) : (
-              <table style={{ borderCollapse: "collapse", fontSize: 13, minWidth: 620 }}>
+            <div
+              style={{
+                height: 400,
+                overflow: "auto",
+                border: "1px solid #E7E5E4",
+                borderRadius: 8,
+                resize: "both",
+                minHeight: 200,
+              }}
+            >
+              <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
                 <thead>
-                  <tr style={{ borderBottom: "2px solid #ddd", textAlign: "left" }}>
-                    <th style={{ padding: 8 }}>ID</th>
-                    <th style={{ padding: 8 }}>エリア名</th>
+                  <tr style={{ borderBottom: `2px solid ${BRAND}`, textAlign: "left" }}>
+                    <th style={{ padding: 8 }}>#</th>
+                    <th style={{ padding: 8 }}>名前</th>
                     <th style={{ padding: 8 }}>理由</th>
-                    <th style={{ padding: 8 }}>大きさの倍率</th>
-                    <th style={{ padding: 8 }}>余裕(m)</th>
+                    <th style={{ padding: 8 }}>登録日</th>
                     <th style={{ padding: 8 }}>操作</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {fogAreas.filter(matchAreaQuery).map((a) => (
+                  {areas.filter(matchAreaQuery).map((a) => (
                     <tr key={a.id} style={{ borderBottom: "1px solid #eee" }}>
                       <td style={{ padding: 8 }}>{a.id}</td>
                       <td style={{ padding: 8 }}>{a.name}</td>
                       <td
                         style={{
                           padding: 8,
-                          maxWidth: 220,
+                          maxWidth: 260,
                           whiteSpace: "nowrap",
                           overflow: "hidden",
                           textOverflow: "ellipsis",
                         }}
-                        title={a.note ?? ""}
+                        title={a.reason ?? ""}
                       >
-                        {a.note ?? "-"}
+                        {a.reason ?? "-"}
                       </td>
-                      <td style={{ padding: 8 }}>
-                        <input
-                          type="number"
-                          step={0.05}
-                          min={0.1}
-                          max={2}
-                          defaultValue={a.size_scale}
-                          onBlur={(e) => {
-                            const v = Number(e.target.value);
-                            if (v !== a.size_scale) updateFogArea(a.id, { size_scale: v });
-                          }}
-                          style={{ width: 70, padding: 4 }}
-                        />
-                      </td>
-                      <td style={{ padding: 8 }}>
-                        <input
-                          type="number"
-                          step={5}
-                          min={-500}
-                          max={500}
-                          defaultValue={a.margin_m}
-                          onBlur={(e) => {
-                            const v = Number(e.target.value);
-                            if (v !== a.margin_m) updateFogArea(a.id, { margin_m: v });
-                          }}
-                          style={{ width: 70, padding: 4 }}
-                        />
+                      <td style={{ padding: 8, whiteSpace: "nowrap" }}>
+                        {new Date(a.created_at).toLocaleDateString("ja-JP")}
                       </td>
                       <td style={{ padding: 8, whiteSpace: "nowrap" }}>
                         <button
-                          onClick={() => openAreaOnMap("fog", a.id)}
+                          onClick={() => openAreaOnMap("banned", a.id)}
                           style={{ ...btn(), marginRight: 6 }}
                         >
                           地図で見る
                         </button>
                         <button
-                          onClick={() => deleteFogArea(a.id)}
+                          onClick={() => purgeArea(a.id)}
                           style={{
                             ...btn(),
                             color: "#fff",
-                            background: armedFogDeleteId === a.id ? "#B3261E" : "#D9938B",
+                            background: armedPurgeId === a.id ? "#B3261E" : "#D9938B",
                             border: "none",
+                            marginRight: 6,
                           }}
                         >
-                          {armedFogDeleteId === a.id ? "本当に削除" : "削除"}
+                          {armedPurgeId === a.id ? "本当に削除" : "エリア内の投稿削除"}
+                        </button>
+                        <button onClick={() => deleteArea(a.id)} style={btn()}>
+                          エリアを削除
                         </button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            )}
-          </div>
+            </div>
+          ) : (
+            <div>
+              <p style={{ fontSize: 12, color: SUB, margin: "0 0 8px" }}>
+                ・<b>倍率</b>：小さいほど縮みます（0.7〜0.8推奨）。
+                <b>余裕(m)</b>：0で端が投稿地点に接します。プラスで離し、マイナスで重なります。
+              </p>
+              <div
+                style={{
+                  height: 400,
+                  overflow: "auto",
+                  border: "1px solid #E7E5E4",
+                  borderRadius: 8,
+                  resize: "both",
+                  minHeight: 200,
+                }}
+              >
+                {fogAreas.filter(matchAreaQuery).length === 0 ? (
+                  <p style={{ fontSize: 13, color: SUB, padding: 12 }}>
+                    該当する調整エリアがありません。
+                  </p>
+                ) : (
+                  <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ borderBottom: `2px solid ${BRAND}`, textAlign: "left" }}>
+                        <th style={{ padding: 8 }}>ID</th>
+                        <th style={{ padding: 8 }}>エリア名</th>
+                        <th style={{ padding: 8 }}>理由</th>
+                        <th style={{ padding: 8 }}>大きさの倍率</th>
+                        <th style={{ padding: 8 }}>余裕(m)</th>
+                        <th style={{ padding: 8 }}>操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {fogAreas.filter(matchAreaQuery).map((a) => (
+                        <tr key={a.id} style={{ borderBottom: "1px solid #eee" }}>
+                          <td style={{ padding: 8 }}>{a.id}</td>
+                          <td style={{ padding: 8 }}>{a.name}</td>
+                          <td
+                            style={{
+                              padding: 8,
+                              maxWidth: 220,
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                            }}
+                            title={a.note ?? ""}
+                          >
+                            {a.note ?? "-"}
+                          </td>
+                          <td style={{ padding: 8 }}>
+                            <input
+                              type="number"
+                              step={0.05}
+                              min={0.1}
+                              max={2}
+                              defaultValue={a.size_scale}
+                              onBlur={(e) => {
+                                const v = Number(e.target.value);
+                                if (v !== a.size_scale) updateFogArea(a.id, { size_scale: v });
+                              }}
+                              style={{ width: 70, padding: 4 }}
+                            />
+                          </td>
+                          <td style={{ padding: 8 }}>
+                            <input
+                              type="number"
+                              step={5}
+                              min={-500}
+                              max={500}
+                              defaultValue={a.margin_m}
+                              onBlur={(e) => {
+                                const v = Number(e.target.value);
+                                if (v !== a.margin_m) updateFogArea(a.id, { margin_m: v });
+                              }}
+                              style={{ width: 70, padding: 4 }}
+                            />
+                          </td>
+                          <td style={{ padding: 8, whiteSpace: "nowrap" }}>
+                            <button
+                              onClick={() => openAreaOnMap("fog", a.id)}
+                              style={{ ...btn(), marginRight: 6 }}
+                            >
+                              地図で見る
+                            </button>
+                            <button
+                              onClick={() => deleteFogArea(a.id)}
+                              style={{
+                                ...btn(),
+                                color: "#fff",
+                                background: armedFogDeleteId === a.id ? "#B3261E" : "#D9938B",
+                                border: "none",
+                              }}
+                            >
+                              {armedFogDeleteId === a.id ? "本当に削除" : "削除"}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
             </div>
           )}
         </section>

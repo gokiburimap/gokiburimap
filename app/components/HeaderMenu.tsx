@@ -448,7 +448,7 @@ function PrivacyPolicyContent() {
           margin: "4px 0 24px",
         }}
       >
-        最終更新日：（公開日を記載）
+        最終更新日：（2026年8月3日）
       </p>
 
       <Paragraph>
