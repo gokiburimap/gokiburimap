@@ -34,6 +34,12 @@ const PANEL_CONTENT_MAX_WIDTH = 640;
 const CONTACT_EMAIL = "ninomae.gokiburimap@gmail.com";
 
 // メールアドレスだけは選択・コピーできるようにする（下の指定を打ち消す）
+// ★2026-08-03 変更：メールアドレスをリンク(<a>)から <span> に変えた。
+//   iOSはリンクの長押しを「メニュー表示」として扱うため、文字を選択できず、
+//   「リンクをコピー」を選ぶと mailto: が付いた文字列が入ってしまう。
+//   タップでメールソフトが開く機能は失われるが、PCでは使っていない
+//   メールソフトが起動して困ることもあるため、アドレスをコピーして
+//   自分の使うメールソフトに貼るほうが確実、と判断した。
 const SELECTABLE = {
   userSelect: "text",
   WebkitUserSelect: "text",
@@ -413,12 +419,9 @@ function HowToGuideContent() {
       </Paragraph>
       <Box>
         <Paragraph>
-          <a
-            href={`mailto:${CONTACT_EMAIL}`}
-            style={{ color: "#292524", fontWeight: 700, textDecoration: "underline", ...SELECTABLE }}
-          >
+          <span style={{ color: "#292524", fontWeight: 700, ...SELECTABLE }}>
             {CONTACT_EMAIL}
-          </a>
+          </span>
         </Paragraph>
         <p style={{ fontSize: 12, color: "#78716C", margin: 0, lineHeight: 1.7 }}>
           お問い合わせの内容によっては、ご返信できない場合がございますので、あらかじめご了承ください。
@@ -448,7 +451,7 @@ function PrivacyPolicyContent() {
           margin: "4px 0 24px",
         }}
       >
-        最終更新日：（2026年8月3日）
+        最終更新日：2026年8月3日
       </p>
 
       <Paragraph>
@@ -516,6 +519,9 @@ function PrivacyPolicyContent() {
           <Item>
             <strong>Google Analytics</strong> — サイトの利用状況（アクセス数・閲覧ページなど）を把握するために利用しています。Cookieを使用してアクセス情報を取得し、Googleに送信しています。取得した情報の取り扱いはGoogleのプライバシーポリシーに準じます。
           </Item>
+          <Item>
+            <strong>Vercel</strong> — 本サービスを配信する基盤として利用しています。あわせて、ページの表示速度を把握するための計測（Speed Insights）を行っており、表示にかかった時間などの情報を送信しています。個人を特定する情報は含まれません。
+          </Item>
         </List>
         <Paragraph>
           なお、今後広告配信サービスを導入する場合があります。その際は、送信先・送信される情報・利用目的を明記のうえ、本ページを更新します。
@@ -537,9 +543,12 @@ function PrivacyPolicyContent() {
             <strong>投稿内容（目撃場所・日付・コメント等）</strong> — 本サービスの性質上、原則として期限を定めず保存します。地図上の表示から除外した場合（削除依頼への対応等）も、トラブル対応や法的紛争に備え、記録として別途保管することがあります。
           </Item>
           <Item>
-            <strong>IPアドレス・ブラウザ情報・投稿日時</strong> — 投稿から<strong>1年間</strong>保存し、期間経過後は順次削除します。
+            <strong>IPアドレス・ブラウザ情報・投稿日時</strong> — 投稿から<strong>1年間</strong>保存し、期間経過後は順次削除します。削除は自動で行われる仕組みとしています。
           </Item>
         </List>
+        <Paragraph>
+          ただし、法令に基づく開示請求など、法的な手続きへの対応が必要となった場合には、その対応が終わるまで対象の記録を保持することがあります。
+        </Paragraph>
       </Section>
 
       <Section title="投稿の削除について">
@@ -570,14 +579,17 @@ function PrivacyPolicyContent() {
         <Paragraph>
           住所・詳細コメントなどの情報は、公開用のデータベースとは分離して保管し、外部から読み出せないようにしています。投稿の受付・削除などの処理は、運営側のみが利用できる仕組みを経由して行っています。
         </Paragraph>
+        <Paragraph>
+          また、地図の表示には、投稿された地点そのものの座標ではなく、一定の区画ごとに集計したうえで算出した架空の座標を用いています。個々の投稿の正確な位置が、閲覧されている方の画面へ送信されることはありません。
+        </Paragraph>
       </Section>
 
       <Section title="お問い合わせ">
         <Box>
           <Paragraph>
-            <a href={`mailto:${CONTACT_EMAIL}`} style={{ color: "#292524", fontWeight: 700, textDecoration: "underline", ...SELECTABLE }}>
+            <span style={{ color: "#292524", fontWeight: 700, ...SELECTABLE }}>
               {CONTACT_EMAIL}
-            </a>
+            </span>
           </Paragraph>
           <p style={{ fontSize: 12, color: "#78716C", margin: 0, lineHeight: 1.7 }}>
             お問い合わせの内容によっては、ご返信できない場合がございますので、あらかじめご了承ください。
@@ -735,12 +747,9 @@ function ContactContent() {
       <Section title="お問い合わせ先">
         <Box>
           <Paragraph>
-            <a
-              href={`mailto:${CONTACT_EMAIL}`}
-              style={{ color: "#292524", fontWeight: 700, textDecoration: "underline", ...SELECTABLE }}
-            >
+            <span style={{ color: "#292524", fontWeight: 700, ...SELECTABLE }}>
               {CONTACT_EMAIL}
-            </a>
+            </span>
           </Paragraph>
         </Box>
       </Section>
