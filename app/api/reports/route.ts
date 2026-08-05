@@ -44,7 +44,7 @@ import { checkOccurredOnRange } from "../../lib/dateRange";
 //   delete from posting_logs;
 // を実行してログを消せばリセットされる。
 // ============================================================
-const RATE_LIMIT_MAX_POSTS = 100;
+const RATE_LIMIT_MAX_POSTS = 3;
 const RATE_LIMIT_WINDOW_MINUTES = 60;
 
 // 入力値の上限（イタズラ・破壊的な巨大データ対策）

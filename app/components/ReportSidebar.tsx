@@ -158,7 +158,7 @@ export default function ReportSidebar({ lat, lng, prefecture, city, address, onC
       if (!res.ok) {
         // ★429 ＝ レート制限。文言を変えたいときはここ
         if (res.status === 429) {
-          alert("投稿は一定時間に1件までです。時間をおいてもう一度お試しください。");
+          alert("短時間に多くの投稿はできません。時間をおいてもう一度お試しください。");
         } else if (res.status === 403 && json?.error === "excluded_area") {
           // ★403 ＝ 投稿禁止エリア。文言を変えたいときはここ
           alert("この場所への投稿は受け付けていません。");
